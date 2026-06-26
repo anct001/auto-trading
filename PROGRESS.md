@@ -107,8 +107,13 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
   `ExchangeStateError` listing all mismatches — spot/lev=1/margin-off/futures-off/reduceOnly.
   **Proof:** `pytest tests/risk/test_exchange_assert.py` → 9 passed. Full suite: **136 passed**,
   ruff clean.
-- **Next:** R5 `risk/killswitch.py` — manual kill override, non-overridable drawdown kill,
-  process + human (7d) dead-man's switches.
+- **R5 (`src/risk/killswitch.py`, money code §4):** `KillSwitch` ARMED⇄HALTED — manual kill and
+  drawdown kill (first cause preserved; runtime eval can only *add* halts, only `re_arm()`
+  clears), plus `evaluate_dead_mans()` (human absent ≥7d → halt; stale process heartbeat →
+  recoverable cancel-resting-entries flag, not a full halt). **Proof:**
+  `pytest tests/risk/test_killswitch.py` → 8 passed. Full suite: **144 passed**, ruff clean.
+- **Next:** R6 `risk/engine.py` — the single gate: assemble killswitch → exchange assert →
+  de-peg → limits → sizing feasibility, fail-closed, same path for bot + manual UI.
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 

@@ -138,7 +138,10 @@ drawdown kill −12% (non-overridable) · de-peg > 1% · human heartbeat 7d · l
   futures on, reduceOnly off) → STOP with the specific reason.
 - **Proof:** `pytest tests/risk/test_exchange_assert.py -q`.
 
-### R5 — Kill-switch + dead-man's switches (`src/risk/killswitch.py`)
+### R5 — Kill-switch + dead-man's switches (`src/risk/killswitch.py`) ✅
+> Done: `KillSwitch` state machine (ARMED⇄HALTED) — manual kill + drawdown kill (first cause
+> preserved, only `re_arm()` clears), `evaluate_dead_mans()` halts on human-absent ≥N days and
+> sets a recoverable cancel-resting-entries flag on a stale process heartbeat. 8 tests.
 - **Do:** a small state machine `ARMED ⇄ HALTED`:
   - **manual human kill** → HALTED (flatten + stop), overrides everything; re-arm requires an
     explicit human action (never automatic).
