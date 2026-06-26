@@ -118,7 +118,9 @@ drawdown kill −12% (non-overridable) · de-peg > 1% · human heartbeat 7d · l
   the 40% cluster cap even though each is under per-asset); beta cap.
 - **Proof:** `pytest tests/risk/test_limits.py -q`.
 
-### R3 — Quote-stablecoin de-peg guard (`src/risk/depeg.py`)
+### R3 — Quote-stablecoin de-peg guard (`src/risk/depeg.py`) ✅
+> Done: `assess_depeg()` (deviation + remark flag) and `check_depeg(..., is_entry)` — blocks
+> entries beyond threshold (both directions), allows exits, flags re-mark. 7 tests.
 - **Do:** `check_depeg(quote_price, cfg)` → within band ok; |quote−1| > threshold (default 1%) →
   **halt new entries + signal re-mark equity + alert**; defines behavior for open positions
   (hold/flag, do not auto-trade through a de-peg — §13.16).

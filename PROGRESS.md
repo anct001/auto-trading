@@ -98,8 +98,12 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
   as one, cap 40%), portfolio beta (cap passed explicitly — no config default invented). Per-trade
   risk stays in sizing R1. **Proof:** `pytest tests/risk/test_limits.py` → 11 passed. Full suite:
   **120 passed**, ruff clean.
-- **Next:** R3 `risk/depeg.py` — quote-stablecoin de-peg guard (>1% → block entries + re-mark;
-  exits still allowed).
+- **R3 (`src/risk/depeg.py`, money code §4):** `assess_depeg()` measures quote deviation from $1
+  (epsilon-robust threshold); `check_depeg(..., is_entry)` blocks new entries during a de-peg
+  (both directions), allows exits, flags a re-mark. **Proof:** `pytest tests/risk/test_depeg.py`
+  → 7 passed. Full suite: **127 passed**, ruff clean.
+- **Next:** R4 `risk/exchange_assert.py` — spot/lev=1/margin-off/futures-off/reduceOnly; any
+  mismatch → STOP.
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 
