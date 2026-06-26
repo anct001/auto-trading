@@ -46,7 +46,9 @@ amount, price, params)`, `fetch_order(id, symbol)`, `cancel_order(id, symbol)`,
 - **Proof:** `pytest tests/execution/test_broker.py` — refuse-unapproved, create args, idempotent
   same-id, precision rounding, TIF attached, partial-fill tracked.
 
-### E2 — Exchange-side protective stops at fill (`stops.py`)
+### E2 — Exchange-side protective stops at fill (`stops.py`) ✅
+> Done: `protective_stop_price()` (entry − mult×ATR, tick-floored) + `StopManager.attach`/
+> `attach_protective` placing a reduceOnly sell stop, idempotent per id. 5 tests.
 - **Do:** on a buy fill, attach a reduceOnly protective stop (OCO/bracket where supported) at a
   stop price derived from the entry (e.g. entry − atr_stop_mult×ATR). Idempotent; reduceOnly.
 - **Proof:** `pytest tests/execution/test_stops.py` — stop attached at fill, reduceOnly, price
