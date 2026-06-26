@@ -167,9 +167,18 @@ assertions, kill-switch/dead-man's, the single-gate engine, runtime tighten-only
 broker + stops + reconcile + convergence, all money-code TDD. **Full suite: 203 passed**, ruff
 clean. Remaining: when CodeGraph is rebuilt, confirm the graph shows every order path through
 `risk/engine`.
-- **Next (sequential, per review rec #2):** `core/config.py` — config hash-lock so §15 config
-  integrity actually takes effect (currently `risk/config.py` validates values but no file is
-  hash-locked).
+### 2026-06-26 — review rec #2: config hash-lock (§15 now enforced)
+- `src/core/config.py`: `hash_config_file` (canonical SHA-256, formatting/key-order independent),
+  `build_manifest`/`verify_configs` (raise `ConfigIntegrityError` on drift or unlocked file),
+  `write_manifest`/`load_manifest`. Applies to declarative config files ONLY (never runtime
+  state/tightening — structural: it only takes file paths).
+- `config/config.lock.json`: committed lockfile for `config/risk/default.json`,
+  `config/strategy/ema_cross.json`, `config/backtest/costs.json`. A test verifies the committed
+  config matches the lock (catches drift at startup/CI). **§15 config integrity is now live.**
+  Re-lock (regenerate) on any intentional config change + human sign-off.
+- **Proof:** `pytest tests/core/` → 7 passed. Full suite: **210 passed**, ruff clean.
+- **Next (review rec #3):** pull real BTC/USDT OHLCV → first real reproducible backtest → work
+  toward closing the P0 DONE-GATE (the big remaining gap: nothing has touched real data yet).
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 
