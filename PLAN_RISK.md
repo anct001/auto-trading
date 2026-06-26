@@ -153,7 +153,12 @@ drawdown kill −12% (non-overridable) · de-peg > 1% · human heartbeat 7d · l
   human heartbeat (7d) halts; fresh heartbeats stay ARMED.
 - **Proof:** `pytest tests/risk/test_killswitch.py -q`.
 
-### R6 — The engine: the single gate (`src/risk/engine.py`)  ← convergence point
+### R6 — The engine: the single gate (`src/risk/engine.py`)  ← convergence point ✅
+> Done: `validate(order, state, cfg, ctx)` — entries run the full fail-closed gauntlet
+> (killswitch → exchange assert → de-peg → daily/drawdown → exposure/concurrency/correlation/
+> beta → feasibility) with all reasons aggregated; exits are allowed (so flatten works during a
+> halt) but rejected if they'd exceed the held qty (`would_short`, spot-only §0). Same path for
+> bot + manual UI (Inv. 9). 13 tests incl. the manual-over-limit drill and multi-breach aggregation.
 - **Do:** `validate(order, state, cfg) → RiskDecision`. Runs, in order and **fail-closed**:
   killswitch state → exchange assertions → de-peg → hard limits → sizing feasibility. **Any**
   failure ⇒ `approved=False` with **all** accumulated reasons; approve only if every check

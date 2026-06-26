@@ -112,8 +112,15 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
   clears), plus `evaluate_dead_mans()` (human absent ≥7d → halt; stale process heartbeat →
   recoverable cancel-resting-entries flag, not a full halt). **Proof:**
   `pytest tests/risk/test_killswitch.py` → 8 passed. Full suite: **144 passed**, ruff clean.
-- **Next:** R6 `risk/engine.py` — the single gate: assemble killswitch → exchange assert →
-  de-peg → limits → sizing feasibility, fail-closed, same path for bot + manual UI.
+- **R6 (`src/risk/engine.py`, money code §4 — the single gate, Inv. 3/9):** `validate()` —
+  entries run the full fail-closed gauntlet (killswitch → exchange assert → de-peg →
+  daily/drawdown → gross/per-asset/concurrency/correlation/beta → feasibility) with all breach
+  reasons aggregated; exits allowed even when halted (flatten works) but rejected if they'd
+  exceed held qty (`would_short`, spot-only §0). Same path/verdict for bot + manual UI. **Proof:**
+  `pytest tests/risk/test_engine.py` → 13 passed incl. the manual-over-limit drill (§14) and
+  multi-breach aggregation. Full suite: **157 passed**, ruff clean.
+- **Next:** R7 — runtime tighten-only guard (a runtime control may tighten/halt, never loosen;
+  loosening needs a config change). Last risk slice.
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 
