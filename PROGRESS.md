@@ -102,8 +102,13 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
   (epsilon-robust threshold); `check_depeg(..., is_entry)` blocks new entries during a de-peg
   (both directions), allows exits, flags a re-mark. **Proof:** `pytest tests/risk/test_depeg.py`
   → 7 passed. Full suite: **127 passed**, ruff clean.
-- **Next:** R4 `risk/exchange_assert.py` — spot/lev=1/margin-off/futures-off/reduceOnly; any
-  mismatch → STOP.
+- **R4 (`src/risk/exchange_assert.py`, money code §4):** `exchange_mismatches()` (pure; a field
+  the exchange won't confirm counts as a mismatch) + `assert_exchange_state()` raising
+  `ExchangeStateError` listing all mismatches — spot/lev=1/margin-off/futures-off/reduceOnly.
+  **Proof:** `pytest tests/risk/test_exchange_assert.py` → 9 passed. Full suite: **136 passed**,
+  ruff clean.
+- **Next:** R5 `risk/killswitch.py` — manual kill override, non-overridable drawdown kill,
+  process + human (7d) dead-man's switches.
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 

@@ -128,7 +128,9 @@ drawdown kill −12% (non-overridable) · de-peg > 1% · human heartbeat 7d · l
   flag is set; an exit is still permitted during a de-peg (we can leave, not enter).
 - **Proof:** `pytest tests/risk/test_depeg.py -q`.
 
-### R4 — Exchange-config assertions (`src/risk/exchange_assert.py`)
+### R4 — Exchange-config assertions (`src/risk/exchange_assert.py`) ✅
+> Done: `exchange_mismatches()` (pure; a missing field is a mismatch → STOP) and
+> `assert_exchange_state()` raising `ExchangeStateError` with all mismatches. 9 tests.
 - **Do:** `assert_exchange_state(actual, cfg)` → require spot mode, leverage == 1, margin
   disabled, futures disabled, reduceOnly on exits (and exchange max-order-size where supported).
   Any mismatch → **STOP, do not trade** (returns a hard-stop / raises a typed error).
