@@ -32,9 +32,9 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
 | Item | Status | Decision |
 |------|--------|----------|
 | Exchange entity | ✅ decided | **Trade = Binance Japan**; **view = Binance Global** (read-only, operator UI only). See ADR 0002. |
-| Target pairs | ⛔ pending | Must be JFSA-listed on Binance Japan; needed for the StaticPairlist (§8.8). |
-| Timeframe | ⛔ pending | e.g. 1h (current ema_cross default) — confirm with operator. |
-| Actual fee tier | ⛔ pending | VIP level / BNB & maker-taker discounts — wrong tier biases the backtest (§8.3). |
+| Target pairs | ✅ decided (1 caveat) | **BTC/USDT**. ⚠️ UNVERIFIED: confirm it's listed on Binance Japan when wiring ccxt (Japan quotes mainly in JPY); fallback **BTC/JPY**. |
+| Timeframe | ✅ decided | **1h**. |
+| Actual fee tier | ⛔ pending | VIP level / BNB & maker-taker discounts — wrong tier biases the backtest (§8.3). Needed before the backtest harness slice, not before the data slice. |
 | Operator KYC / ToS | ⛔ operator to verify | Confirm eligibility on Binance Japan + that its ToS permits API/bot spot trading (§11). |
 | Exact ccxt id/endpoint for the JP entity | ⛔ pending | Verify against current docs — do NOT invent (§7/§10). |
 
@@ -44,8 +44,10 @@ Per §7 build order — **data → quality gate → harness → dumb strategy �
 Recommended first slice: `src/data/feed.py` + `src/data/store.py` + `src/data/quality.py` with
 TDD on the quality gate (§8.1), proven by a reproducible OHLCV pull + quarantine unit tests.
 
-**Blocked until** the remaining ⛔ ORIENT items above are confirmed (pairs, timeframe, fee tier,
-ccxt endpoint). Once confirmed, write `PLAN.md` (slices, each with a proof command) and begin.
+**Ready to start:** pair (BTC/USDT), timeframe (1h) decided — enough to begin the data → quality
+gate slice on dry-run/testnet data. Fee tier + the BTC/USDT-on-Japan check are only needed
+before the **backtest harness** slice (§8.3) and **P4** respectively, so they don't block the
+first slice. Next: write `PLAN.md` (slices, each with a proof command), then build.
 
 ## Phase ledger
 

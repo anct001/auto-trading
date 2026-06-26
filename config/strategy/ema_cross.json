@@ -10,6 +10,6 @@
   "target_regime": "trend",
   "trading_venue": "binance_japan",
   "_venue_note": "Trading venue = Binance Japan only (ADR 0002, §10/§11). Pairs must be JFSA-listed on the Japan entity. Binance Global is viewing-only and never feeds this strategy.",
-  "pairs": [],
-  "_pairs_note": "StaticPairlist required for reproducibility (§8.8); fill in at ORIENT with the operator's confirmed Binance Japan pairs + timeframe + actual fee tier."
+  "pairs": ["BTC/USDT"],
+  "_pairs_note": "Chosen at ORIENT: BTC/USDT, 1h. StaticPairlist for reproducibility (§8.8). UNVERIFIED dependency: confirm BTC/USDT is listed on Binance Japan when wiring ccxt (§10) — Japan's primary quote is JPY; if absent, fall back to BTC/JPY. Fee tier still pending (needed for the backtest slice, §8.3)."
 }
