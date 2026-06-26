@@ -54,7 +54,7 @@ drawdown kill −12% (non-overridable) · de-peg > 1% · human heartbeat 7d · l
 
 ---
 
-## Prerequisite — ATR on the single feature path
+## Prerequisite — ATR on the single feature path ✅
 
 `sizing.py` needs ATR; the single-feature-path rule (§15) says it lives in
 `features/indicators.py` (today only EMA). `quality.py` already has a private true-range helper
@@ -69,7 +69,11 @@ drawdown kill −12% (non-overridable) · de-peg > 1% · human heartbeat 7d · l
 
 ## Slices (each: test-first; money code)
 
-### R0 — Risk types + RiskConfig loader (`src/risk/types.py`, `core/config.py` minimal)
+### R0 — Risk types + RiskConfig loader (`src/risk/types.py`, `src/risk/config.py`) ✅
+> Done: `types.py` (Order/Position/PortfolioState/RiskDecision, self-validating, with drawdown/
+> day_return/total_position_value/notional helpers) + `config.py` (RiskConfig load+validate,
+> refuses leverage>0 and soft/hard inversion). 22 tests. *(Loader lives in `risk/config.py`;
+> the `core/config.py` hash-lock over all config files is a later, separate slice.)*
 - **Do:** the dataclasses above; load `RiskConfig` from `config/risk/default.json`. Validate the
   config (positive caps, soft < hard in magnitude, leverage == 0 pre-P5) and **refuse to load**
   a malformed/loosened-beyond-schema config. This is the declarative-config side of the §15

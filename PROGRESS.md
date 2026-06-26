@@ -76,7 +76,18 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
   ATR prereq → R0 types/config → R1 sizing (incl. sub-minimum SKIP-not-round-up) → R2 hard
   limits → R3 de-peg → R4 exchange assertions → R5 kill-switch/dead-man's → R6 engine (single
   gate) → R7 runtime tighten-only. Encodes Inv. 3/9 (one path, no backdoor), manual-kill
-  override, and tighten-never-loosen directly in tests. **No code yet** — plan only.
+  override, and tighten-never-loosen directly in tests.
+
+### 2026-06-26 — risk BUILD: ATR prereq + R0
+- **ATR prereq:** added `true_range()` + `atr()` to `features/indicators.py` (single feature
+  path §15); refactored `data/quality.py` to use the canonical `true_range` (one implementation,
+  no skew — quality tests unchanged). **Proof:** `pytest tests/features/test_atr.py` → 4 passed.
+- **R0 (`src/risk/types.py` + `src/risk/config.py`):** self-validating Order/Position/
+  PortfolioState/RiskDecision + RiskConfig loader that refuses leverage>0 (Inv. 4) and soft/hard
+  inversion (§15 config-integrity, config-only). **Proof:** `pytest tests/risk/` → 22 passed.
+  Full suite: **98 passed**, ruff clean.
+- **Next:** R1 `risk/sizing.py` (money code) — inverse-ATR + fractional-Kelly cap + minNotional/
+  lot/tick feasibility with **sub-minimum → SKIP, never round up past the risk cap**.
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 

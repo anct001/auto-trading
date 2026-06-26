@@ -29,6 +29,31 @@ def ema(values: Iterable[float], period: int) -> pd.Series:
     return s.ewm(span=period, adjust=False).mean()
 
 
+def true_range(df: pd.DataFrame) -> pd.Series:
+    """True range per bar: max(high-low, |high-prev_close|, |low-prev_close|).
+
+    The single canonical TR for the whole system — the quality gate's spike check, ATR sizing,
+    and any volatility feature all use this one implementation (§15). First bar has no previous
+    close, so its TR is simply high-low.
+    """
+    prev_close = df["close"].shift(1)
+    hl = df["high"] - df["low"]
+    hc = (df["high"] - prev_close).abs()
+    lc = (df["low"] - prev_close).abs()
+    return pd.concat([hl, hc, lc], axis=1).max(axis=1)
+
+
+def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Average True Range = simple rolling mean of true_range over ``period`` bars.
+
+    Causal (uses only bars ≤ t); the first ``period-1`` bars are NaN. Raises on a non-positive
+    period.
+    """
+    if period <= 0:
+        raise ValueError(f"ATR period must be positive, got {period}")
+    return true_range(df).rolling(period).mean()
+
+
 def with_emas(
     df: pd.DataFrame, periods: Iterable[int], *, source: str = "close"
 ) -> pd.DataFrame:

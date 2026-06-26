@@ -24,6 +24,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from src.data.feed import OHLCV_COLUMNS
+from src.features.indicators import true_range
 
 # Priority order: structural timestamp issues first, then price validity, then the statistical
 # spike check (which depends on a clean-enough history to mean anything).
@@ -44,14 +45,6 @@ class QualityResult:
 
     clean: pd.DataFrame
     quarantined: pd.DataFrame
-
-
-def _true_range(df: pd.DataFrame) -> pd.Series:
-    prev_close = df["close"].shift(1)
-    hl = df["high"] - df["low"]
-    hc = (df["high"] - prev_close).abs()
-    lc = (df["low"] - prev_close).abs()
-    return pd.concat([hl, hc, lc], axis=1).max(axis=1)
 
 
 def check_quality(
@@ -88,7 +81,7 @@ def check_quality(
 
     # Spike: true range vs the PRIOR rolling ATR (shifted, so the spike candle does not inflate
     # its own threshold). Only meaningful once enough history exists and ATR > 0.
-    tr = _true_range(work)
+    tr = true_range(work)
     atr_prev = tr.rolling(atr_period).mean().shift(1)
     spike = (atr_prev > 0) & (tr > spike_atr_mult * atr_prev)
     mark(spike.fillna(False), "spike")
