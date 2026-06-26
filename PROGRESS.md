@@ -71,6 +71,13 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
 - **Next:** Slice 8 — forward dry-run wiring (signal metrics ≈ backtest). Then the P0 DONE-GATE
   re-prove, then risk-engine wiring (money code, separate TDD plan).
 
+### 2026-06-26 — risk-engine TDD plan written
+- `PLAN_RISK.md`: the dedicated **test-first** plan for `src/risk/**` (money code). Slices:
+  ATR prereq → R0 types/config → R1 sizing (incl. sub-minimum SKIP-not-round-up) → R2 hard
+  limits → R3 de-peg → R4 exchange assertions → R5 kill-switch/dead-man's → R6 engine (single
+  gate) → R7 runtime tighten-only. Encodes Inv. 3/9 (one path, no backdoor), manual-kill
+  override, and tighten-never-loosen directly in tests. **No code yet** — plan only.
+
 ## ORIENT decisions (§7 — being filled in with the operator)
 
 | Item | Status | Decision |
