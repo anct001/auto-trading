@@ -44,7 +44,17 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
   clean frame (so never a signal/trade). **Proof:** `pytest tests/data/test_quality.py` →
   9 passed (one per defect class + clean passthrough + empty). Full suite: **35 passed**, ruff
   clean.
-- **Next:** Slice 4 — `src/features/indicators.py` (single feature path: EMA first).
+- **Slice 4 (`src/features/indicators.py`, §15 single feature path):** `ema()` (recursive,
+  alpha=2/(period+1), causal) + `with_emas()`; the ONE EMA implementation the strategy and
+  backtest share (no train-serve skew). **Proof:** `pytest tests/features/test_indicators.py`
+  → 7 passed (hand-computed EMA, constant series, period validation, quality-frame integration).
+- **Slice 5 (`src/strategy/base.py` + `ema_cross.py`, §5):** `Strategy` base emits intent only
+  (enter_long/exit/hold), declares target regime, never sizes/executes (Inv. 3). `EmaCross` =
+  fast/slow EMA crossover, long-or-flat. **Proof:** `pytest tests/strategy/test_ema_cross.py`
+  → 8 passed incl. a **causality test** (signal at bar t identical on prefix vs full frame →
+  no look-ahead). Full suite: **50 passed**, ruff clean.
+- **Next:** Slice 6 — `backtest/runner.py` (Freqtrade + StaticPairlist). ⛔ needs the operator's
+  actual fee tier (§8.3).
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 
