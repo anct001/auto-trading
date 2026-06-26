@@ -119,8 +119,18 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
   exceed held qty (`would_short`, spot-only §0). Same path/verdict for bot + manual UI. **Proof:**
   `pytest tests/risk/test_engine.py` → 13 passed incl. the manual-over-limit drill (§14) and
   multi-breach aggregation. Full suite: **157 passed**, ruff clean.
-- **Next:** R7 — runtime tighten-only guard (a runtime control may tighten/halt, never loosen;
-  loosening needs a config change). Last risk slice.
+- **R7 (`src/risk/runtime.py`, money code Inv. 3):** `apply_runtime_override()` returns a
+  tightened, re-validated RiskConfig or raises `RuntimeLoosenError` — direction-aware (lower-is-
+  tighter caps; negative loss/drawdown limits tighten toward zero); one loosening refuses the
+  whole override. **Proof:** `pytest tests/risk/test_runtime_controls.py` → 10 passed. Full
+  suite: **167 passed**, ruff clean.
+
+### Risk engine (PLAN_RISK) — R0–R7 COMPLETE
+All risk money-code slices done & tested: types/config, sizing, limits, de-peg, exchange
+assertions, kill-switch/dead-man's, the single-gate engine, runtime tighten-only. **Remaining
+integration follow-ups** (not core logic): (a) wire `risk/sizing.compute_size` into the backtest
+to replace the full-equity placeholder; (b) emit RiskPassed/Rejected to `events/log.py` once it
+exists; (c) the CodeGraph convergence check when `execution/` is built. Then the P0 DONE-GATE.
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 

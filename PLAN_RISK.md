@@ -174,7 +174,10 @@ drawdown kill −12% (non-overridable) · de-peg > 1% · human heartbeat 7d · l
   - reasons aggregate (multiple simultaneous breaches all reported).
 - **Proof:** `pytest tests/risk/test_engine.py -q`.
 
-### R7 — Runtime tighten-only guard (`engine`/`limits`)
+### R7 — Runtime tighten-only guard (`src/risk/runtime.py`) ✅
+> Done: `apply_runtime_override()` returns a tightened, re-validated RiskConfig or raises
+> `RuntimeLoosenError`. Direction-aware (lower-is-tighter caps vs nearer-zero-is-tighter negative
+> limits); any single loosening refuses the whole override. 10 tests.
 - **Do:** a runtime override may **tighten** any limit or **halt**, but an attempt to **loosen**
   at runtime is rejected (needs config + human). Encodes Inv. 3 directly.
 - **Test-first:** tightening per-trade 0.5%→0.3% applies; halting applies; loosening 0.5%→1.0%
