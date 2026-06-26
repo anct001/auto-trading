@@ -155,8 +155,21 @@ assertions, kill-switch/dead-man's, the single-gate engine, runtime tighten-only
   double-trade), floors qty/price to lot/tick via the shared `floor_to_step`, sets TIF, tracks
   partial fills. Promoted `sizing.floor_to_step` to public (shared precision). **Proof:**
   `pytest tests/execution/test_broker.py` → 6 passed. Full suite: **187 passed**, ruff clean.
-- **Next (PLAN_EXECUTION):** E2 stops (exchange-side protective stop at fill), E3 reconcile
-  (restart-safe), E4 convergence test (no path to the exchange bypasses the risk gate).
+- **E2 (`stops.py`):** reduceOnly protective stop attached at fill (`protective_stop_price` =
+  entry − mult×ATR, idempotent). 5 tests.
+- **E3 (`reconcile.py`):** restart-safe — exchange truth wins, adopts unknown positions, drops
+  orphan local orders (no double-trade), flags naked positions (no reduceOnly stop). 8 tests.
+- **E4 (convergence):** integration test — approved order reaches the exchange; over-limit/
+  halted/unsized decisions are refused by the broker (exchange untouched). Inv. 3/9 end-to-end.
+  4 tests.
+
+### Execution layer (PLAN_EXECUTION) — E1–E4 COMPLETE
+broker + stops + reconcile + convergence, all money-code TDD. **Full suite: 203 passed**, ruff
+clean. Remaining: when CodeGraph is rebuilt, confirm the graph shows every order path through
+`risk/engine`.
+- **Next (sequential, per review rec #2):** `core/config.py` — config hash-lock so §15 config
+  integrity actually takes effect (currently `risk/config.py` validates values but no file is
+  hash-locked).
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 

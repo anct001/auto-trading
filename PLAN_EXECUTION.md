@@ -54,14 +54,19 @@ amount, price, params)`, `fetch_order(id, symbol)`, `cancel_order(id, symbol)`,
 - **Proof:** `pytest tests/execution/test_stops.py` — stop attached at fill, reduceOnly, price
   correct, not duplicated.
 
-### E3 — Restart-safe reconciliation (`reconcile.py`)
+### E3 — Restart-safe reconciliation (`reconcile.py`) ✅
+> Done: `reconcile(local, exchange)` (pure) — exchange truth wins on positions, adopts unknown
+> positions, drops orphan local orders, never re-flags an existing order, flags naked positions
+> (no reduceOnly stop). 8 tests.
 - **Do:** `reconcile(local_state, exchange_truth)` → the corrected state + actions: adopt
   exchange-open orders/positions, drop local ghosts, never re-submit an order that already
   exists (no double-trade). Detect a naked position (no protective stop) → flag to re-attach.
 - **Proof:** `pytest tests/execution/test_reconcile.py` — adopt unknown exchange position,
   reconcile filled-while-down order, no double-submit, naked-position flagged.
 
-### E4 — Convergence (Inv. 3) end-to-end
+### E4 — Convergence (Inv. 3) end-to-end ✅
+> Done: integration test — approved order flows to the exchange; over-limit/halted/unsized
+> decisions are refused by the broker (exchange untouched). 4 tests.
 - **Do:** an integration test proving the only path from a strategy/manual order to
   `exchange.create_order` is `engine.validate → (approved) → broker.submit`; an unapproved or
   over-limit order never reaches the exchange.
@@ -69,9 +74,9 @@ amount, price, params)`, `fetch_order(id, symbol)`, `cancel_order(id, symbol)`,
 
 ## Definition of done
 
-- [ ] Every slice green via TDD.
-- [ ] Broker refuses unapproved orders; idempotent; precise; TIF set.
-- [ ] Protective stop attaches at fill and is reduceOnly.
-- [ ] Restart recovers from exchange truth without double-trading.
-- [ ] Convergence test: no path to the exchange bypasses `engine.validate` (Inv. 3/9).
+- [x] Every slice green via TDD.
+- [x] Broker refuses unapproved orders; idempotent; precise; TIF set.
+- [x] Protective stop attaches at fill and is reduceOnly.
+- [x] Restart recovers from exchange truth without double-trading.
+- [x] Convergence test: no path to the exchange bypasses `engine.validate` (Inv. 3/9).
 - [ ] (When CodeGraph is rebuilt) the graph shows every order path through `risk/engine`.
