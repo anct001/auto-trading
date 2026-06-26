@@ -104,7 +104,10 @@ drawdown kill −12% (non-overridable) · de-peg > 1% · human heartbeat 7d · l
   - tiny-account three-way-tension flag fires.
 - **Proof:** `pytest tests/risk/test_sizing.py -q`.
 
-### R2 — Hard limits (`src/risk/limits.py`)
+### R2 — Hard limits (`src/risk/limits.py`) ✅
+> Done: pure predicates → `CheckResult(ok, reason)` for gross, per-asset, concurrency, daily
+> soft (entries) / hard (halt), drawdown kill, correlation-cluster (>0.7 summed as one), and
+> portfolio beta (cap passed explicitly — no config default invented). 11 tests, boundary-checked.
 - **Do:** one pure predicate per limit, each returning `(ok: bool, reason: str)`:
   per-trade risk ≤ cap · gross exposure ≤ 100% · per-asset ≤ 25% · max concurrent ≤ 3 ·
   **daily soft −2%** (block *new entries* only) vs **daily hard −4%** (flatten all) ·

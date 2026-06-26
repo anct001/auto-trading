@@ -92,8 +92,14 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
   **never rounds up past the risk cap** to meet the exchange minimum. **Proof:**
   `pytest tests/risk/test_sizing.py` → 11 passed incl. the sub-minimum-SKIP drill, lot/tick
   round-DOWN, and a realized-risk-≤-budget property. Full suite: **109 passed**, ruff clean.
-- **Next:** R2 `risk/limits.py` (money code) — per-trade / gross / per-asset / concurrency /
-  daily soft vs hard / drawdown kill / correlation-cluster (treat >0.7-corr as one) + beta.
+- **R2 (`src/risk/limits.py`, money code §4):** boundary-checked pure predicates returning
+  `CheckResult(ok, reason)` — gross ≤100%, per-asset ≤25%, concurrency ≤3, daily soft (block
+  entries) / hard (halt), drawdown kill −12%, **correlation-cluster** (>0.7-corr positions summed
+  as one, cap 40%), portfolio beta (cap passed explicitly — no config default invented). Per-trade
+  risk stays in sizing R1. **Proof:** `pytest tests/risk/test_limits.py` → 11 passed. Full suite:
+  **120 passed**, ruff clean.
+- **Next:** R3 `risk/depeg.py` — quote-stablecoin de-peg guard (>1% → block entries + re-mark;
+  exits still allowed).
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 
