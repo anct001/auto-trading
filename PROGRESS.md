@@ -146,8 +146,17 @@ assertions, kill-switch/dead-man's, the single-gate engine, runtime tighten-only
   reasons. **Proof:** `pytest tests/events/` → 9 passed (roundtrip, append-only, secret never in
   raw file, nested/list redaction, persistence, risk-decision emission). Full suite: **181
   passed**, ruff clean.
-- **Next (sequential):** (c) `execution/**` (money code, TDD) — broker (idempotent orders,
-  precision, TIF), exchange-side stops, restart-safe reconcile. Will get its own PLAN.
+### 2026-06-26 — integration (c): execution layer started (PLAN_EXECUTION + E1)
+- `PLAN_EXECUTION.md`: TDD plan for `execution/**` — E0 types, E1 broker, E2 stops, E3 reconcile,
+  E4 convergence. Encodes Inv. 3/9 (broker only submits approved decisions), idempotency,
+  precision, exchange-side stops, restart-safety.
+- **E1 (`src/execution/broker.py`, money code §9):** `Broker.submit(decision, ...)` refuses any
+  unapproved decision (exchange never touched — Inv. 3), idempotent per client_order_id (no
+  double-trade), floors qty/price to lot/tick via the shared `floor_to_step`, sets TIF, tracks
+  partial fills. Promoted `sizing.floor_to_step` to public (shared precision). **Proof:**
+  `pytest tests/execution/test_broker.py` → 6 passed. Full suite: **187 passed**, ruff clean.
+- **Next (PLAN_EXECUTION):** E2 stops (exchange-side protective stop at fill), E3 reconcile
+  (restart-safe), E4 convergence test (no path to the exchange bypasses the risk gate).
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 

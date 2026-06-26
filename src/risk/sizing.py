@@ -56,8 +56,9 @@ class SizingResult:
         return Order(pair=self.pair, side="buy", qty=self.qty, price=self.price, source=source)
 
 
-def _floor_to_step(value: float, step: float) -> float:
-    """Floor ``value`` to a multiple of ``step`` exactly (Decimal, no float drift)."""
+def floor_to_step(value: float, step: float) -> float:
+    """Floor ``value`` to a multiple of ``step`` exactly (Decimal, no float drift). Shared by the
+    broker for order precision (§9), so sizing and submission round identically."""
     if step <= 0:
         return value
     v, s = Decimal(str(value)), Decimal(str(step))
@@ -87,8 +88,8 @@ def compute_size(
     max_qty = (cfg.max_fractional_kelly * state.equity) / price
     capped_qty = min(raw_qty, max_qty)
 
-    price_r = _floor_to_step(price, market.tick_size)
-    qty_r = _floor_to_step(capped_qty, market.lot_step)
+    price_r = floor_to_step(price, market.tick_size)
+    qty_r = floor_to_step(capped_qty, market.lot_step)
 
     if qty_r <= 0:
         return SizingResult(feasible=False, reason="below_lot_step", pair=pair)
