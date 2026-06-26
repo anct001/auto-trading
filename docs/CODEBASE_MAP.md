@@ -64,7 +64,8 @@ autonomous-crypto-trading-agent/
 │       ├── market/               # watchlist, coin detail (k-line+indicators), heatmap, screener
 │       └── orders/               # order & trade panel + manual order (routes through risk)
 ├── backtest/                     # §8 harness
-│   ├── runner.py                 # Freqtrade integration; StaticPairlist for reproducibility
+│   ├── runner.py                 # deterministic backtest (P0); Freqtrade at P3 — ADR/PLAN
+│   ├── metrics.py                # §8.7 metric suite (CAGR/Calmar/Sharpe/Sortino…) + sample gate
 │   ├── walkforward.py            # out-of-sample + walk-forward + deflated-Sharpe (§5)
 │   └── replay/                   # §15 adversarial replay (flash crash, gap, outage)
 ├── config/

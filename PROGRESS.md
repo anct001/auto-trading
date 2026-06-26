@@ -61,8 +61,15 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
   0.05%). **Proof:** `pytest tests/backtest/test_runner.py` → 7 passed (reproducible reruns
   §8.8, fill timing, cost math, force-close, real-EmaCross determinism). Full suite: **57
   passed**, ruff clean.
-- **Next:** Slice 7 — `backtest/walkforward.py` (OOS + walk-forward + full metric suite
-  Calmar/Sharpe/Sortino + ≥100-trade sample gate).
+- **Slice 7 (`backtest/metrics.py` + `walkforward.py`, §8.5/§8.7):** full metric suite
+  (CAGR, max drawdown, Calmar, Sharpe, Sortino, win rate, profit factor, expectancy, trade
+  count — drawdown/Calmar primary; NaN on degenerate, +inf PF on no losses) + chronological OOS
+  split + rolling walk-forward where `build_strategy` sees train-only; aggregated OOS trades
+  drive the ≥100-trade `sample_size_ok` gate. Deflated-Sharpe deferred to P2 (needs §15 journal
+  count). **Proof:** `pytest tests/backtest/` → 15 passed. Full suite: **72 passed**, ruff clean.
+- **Costs config:** updated to VIP0 **with BNB discount** → 0.075% maker/taker (`config/backtest/costs.json`).
+- **Next:** Slice 8 — forward dry-run wiring (signal metrics ≈ backtest). Then the P0 DONE-GATE
+  re-prove, then risk-engine wiring (money code, separate TDD plan).
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 

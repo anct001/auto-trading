@@ -76,11 +76,17 @@ Python 3.11+ · ccxt (data + connectivity) · pandas + pyarrow (Parquet) · Freq
   reruns (§8.8), next-open fill timing, exact cost math, force-close at end, real-EmaCross
   determinism.
 
-### Slice 7 — Walk-forward + metrics (`backtest/walkforward.py`)
-- **Do:** out-of-sample split + walk-forward; compute CAGR, max drawdown, Calmar, Sharpe,
-  Sortino, win rate, profit factor, expectancy, trade count (drawdown/Calmar primary).
-- **Proof:** walk-forward runs across ≥ a multi-regime window and reports the metric set; the
-  sample-size gate (≥ ~100 trades) is checked and surfaced. `pytest tests/backtest/ -q`.
+### Slice 7 — Walk-forward + metrics (`backtest/metrics.py` + `walkforward.py`) ✅
+- **Done:** `metrics.py` computes the full suite — CAGR, max drawdown, Calmar, Sharpe, Sortino,
+  win rate, profit factor, expectancy, trade count (drawdown/Calmar primary, §0/§8.7); degenerate
+  inputs → NaN, no-loss PF → +inf. `walkforward.py` does the chronological OOS split and a
+  rolling train→test walk-forward where `build_strategy` sees only the train window; OOS trades
+  are aggregated and the ≥100-trade sample-size gate is surfaced as `sample_size_ok`.
+- **Proof:** `pytest tests/backtest/test_metrics.py tests/backtest/test_walkforward.py` → 15
+  passed (exact trade stats, NaN/inf edge cases, fold count, aggregate=sum-of-folds, train-only
+  visibility, determinism, sample-size flag).
+- **Deferred to P2:** deflated-Sharpe / multiple-testing correction (needs the §15 journal's
+  hypotheses-tried count; no hypotheses are being batch-tested at P0).
 
 ### Slice 8 — Forward dry-run wiring (Freqtrade `dry_run: true`)
 - **Do:** continuous dry-run on BTC/USDT 1h; capture **signal** metrics for comparison to the

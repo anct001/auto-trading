@@ -1,11 +1,11 @@
 {
-  "_comment": "Backtest cost model (§8.3). HASH-LOCKED declarative config (§15). Zero/wrong cost = invalid backtest. Set at ORIENT: Binance spot VIP 0, no BNB discount. Fees are fractions (0.001 = 0.10%). Adjust if the operator's tier/BNB usage changes.",
+  "_comment": "Backtest cost model (§8.3). HASH-LOCKED declarative config (§15). Zero/wrong cost = invalid backtest. Set at ORIENT: Binance spot VIP 0 WITH BNB discount (25% off). Fees are fractions (0.00075 = 0.075%). Adjust if the operator's tier/BNB usage changes.",
   "schema_version": 1,
   "venue": "binance_japan",
   "fee_tier": "VIP0",
-  "bnb_discount": false,
-  "maker_fee": 0.001,
-  "taker_fee": 0.001,
+  "bnb_discount": true,
+  "maker_fee": 0.00075,
+  "taker_fee": 0.00075,
   "slippage": 0.0005,
-  "_notes": "VIP0 spot = 0.10% maker / 0.10% taker. With BNB it would be ~0.075%. Slippage 0.05%/fill is a starting assumption for BTC/USDT 1h; revisit with the capacity check (§5) before any size increase."
+  "_notes": "VIP0 spot = 0.10% base; with BNB 25% off → 0.075% maker / 0.075% taker. Slippage 0.05%/fill is a starting assumption for BTC/USDT 1h; revisit with the capacity check (§5) before any size increase. NOTE: BNB-paid fees still net the same after-tax line in §11 — model BNB price risk separately if BNB is held as inventory."
 }
