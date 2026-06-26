@@ -177,8 +177,29 @@ clean. Remaining: when CodeGraph is rebuilt, confirm the graph shows every order
   config matches the lock (catches drift at startup/CI). **§15 config integrity is now live.**
   Re-lock (regenerate) on any intentional config change + human sign-off.
 - **Proof:** `pytest tests/core/` → 7 passed. Full suite: **210 passed**, ruff clean.
-- **Next (review rec #3):** pull real BTC/USDT OHLCV → first real reproducible backtest → work
-  toward closing the P0 DONE-GATE (the big remaining gap: nothing has touched real data yet).
+### 2026-06-26 — review rec #3: first real-data run (harness validated, P0 NOT closed)
+- `scripts/first_real_backtest.py`: pulls real BTC/USDT 1h OHLCV and runs the full P0 pipeline
+  end-to-end. **First time the code touched real market data.**
+- **Binance is unreachable here (HTTP 451, restricted location)** — the actual venue (Binance
+  Japan, ADR 0002) cannot be reached from this environment. Used **Kraken BTC/USDT as a
+  PROVISIONAL data source** to validate the harness only.
+- **Result (719 real closed candles, ~30 days):** quality gate clean (0 quarantined); stored +
+  reloaded reproducibly; **risk-sized backtest reproducible=True**, 8 trades; metrics computed
+  (Calmar 4.4 / Sharpe 0.65 — but over 8 trades = noise); **sample-size gate correctly = False**
+  (8 ≪ 100); walk-forward 4 folds / 7 OOS trades / sample_ok=False.
+- **What this proves:** feed→quality→store→features→strategy→risk-sized backtest→walk-forward all
+  work on real OHLCV and are reproducible (§8.8). The §8 discipline holds: a green-looking number
+  over a tiny sample is rejected by the gate.
+- **What it does NOT prove / P0 still NOT closed:** wrong venue (Kraken, not Binance Japan);
+  Binance fees applied to Kraken data; far too few trades (need ≥100, multi-regime); no forward
+  dry-run. **Closing P0 requires running on the operator's actual venue, from an environment that
+  can reach it, with enough history** — an operational step, not more code.
+
+### Review recommendations #1–#3 — DONE
+(1) execution E1–E4 complete; (2) config hash-lock live (§15); (3) harness validated on real
+data. **Full suite: 210 passed**, ruff clean. Remaining big gaps: `core/{secrets,clock}` stubs,
+`llm/**`, `ui/**`, `strategy/shadow`, and the real P0 close (real venue + ≥100-trade sample +
+dry-run).
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 
