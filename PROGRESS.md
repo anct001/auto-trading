@@ -137,9 +137,17 @@ assertions, kill-switch/dead-man's, the single-gate engine, runtime tighten-only
   `pytest tests/backtest/test_runner_risk.py` → 5 passed (qty matches compute_size, deploys < full
   equity, respects per-trade budget, sub-minimum skipped, reproducible). Full suite: **172
   passed**, ruff clean.
-- **Remaining integration follow-ups:** (b) emit RiskPassed/Rejected to `events/log.py` once it
-  exists; (c) CodeGraph convergence check when `execution/` is built. Then the P0 DONE-GATE.
-- **Next (sequential):** (b) `events/log.py` — append-only, secret-redacted event log (§15).
+- **Remaining integration follow-up:** CodeGraph convergence check when `execution/` is built.
+
+### 2026-06-26 — integration (b): append-only event log
+- `src/events/log.py` (§15, Inv. 6): `EventLog` append-only JSONL (no update/delete API; file
+  only grows), `redact()` scrubs key/secret/token fields **before write** (append-only ⇒
+  undeletable), `read_all()` replays, `log_risk_decision()` emits RiskPassed/RiskRejected with
+  reasons. **Proof:** `pytest tests/events/` → 9 passed (roundtrip, append-only, secret never in
+  raw file, nested/list redaction, persistence, risk-decision emission). Full suite: **181
+  passed**, ruff clean.
+- **Next (sequential):** (c) `execution/**` (money code, TDD) — broker (idempotent orders,
+  precision, TIF), exchange-side stops, restart-safe reconcile. Will get its own PLAN.
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 
