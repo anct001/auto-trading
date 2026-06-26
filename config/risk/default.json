@@ -1,0 +1,33 @@
+{
+  "_comment": "Declarative risk limits (§4). HASH-LOCKED by core/config (§15) — declarative only, NOT runtime state. Runtime controls may only TIGHTEN these or halt, never loosen (Invariant 3). Defaults are conservative starting guardrails to tune, not profit targets.",
+  "schema_version": 1,
+  "per_trade_risk_pct": 0.5,
+  "position_sizing": "inverse_atr",
+  "max_fractional_kelly": 0.5,
+  "max_concurrent_positions": 3,
+  "gross_exposure_pct": 100,
+  "per_asset_cap_pct": 25,
+  "correlation": {
+    "cluster_corr_threshold": 0.7,
+    "cluster_exposure_cap_pct": 40
+  },
+  "daily_loss_limits": {
+    "soft_pct": -2.0,
+    "hard_pct": -4.0
+  },
+  "max_drawdown_killswitch_pct": -12.0,
+  "depeg_guard": {
+    "quote_assets": ["USDT", "USDC"],
+    "threshold_pct": 1.0
+  },
+  "capital_on_exchange_cap": null,
+  "human_heartbeat_days": 7,
+  "leverage": 0,
+  "exchange_assertions": {
+    "spot_mode": true,
+    "leverage": 1,
+    "margin_disabled": true,
+    "futures_disabled": true,
+    "reduce_only_on_exit": true
+  }
+}

@@ -1,0 +1,26 @@
+# ops/docker-compose.yml — §2 runtime (Docker Compose). Scaffold only.
+#
+# Services are commented placeholders; uncomment/flesh out slice-by-slice as the build
+# progresses (§7). Secrets come from a git-ignored .env (§10), never baked into images.
+#
+# Solo-appropriate scope (§16): one host; multi-region failover is deferred.
+
+version: "3.9"
+
+services:
+  # bot:
+  #   build: ..
+  #   env_file: ../.env            # git-ignored; trade-only, withdrawals disabled (§10)
+  #   environment:
+  #     - EXCHANGE_SANDBOX=true     # dry-run/testnet until P4
+  #   volumes:
+  #     - ../user_data:/app/user_data   # git-ignored
+  #   restart: unless-stopped
+
+  # ollama:                         # local LLM slow loop, off the trading path (§3)
+  #   image: ollama/ollama
+  #   ports: ["11434:11434"]
+  #   volumes: ["ollama:/root/.ollama"]
+
+# volumes:
+#   ollama:

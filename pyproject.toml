@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autonomous-crypto-trading-agent"
+version = "0.6.0"
+description = "Solo-operator, paper-first, phase-gated automated crypto-trading system (see docs/MASTER_DRIVER.md)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "anct001" }]
+
+# Runtime dependencies are intentionally NOT pinned yet — this is the P0 scaffold.
+# Add them slice-by-slice as the data → harness → strategy → risk wiring lands (§7),
+# justifying any deviation from the §2 reference stack in PLAN.md.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-cov",
+  "ruff",
+  "mypy",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "backtest*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+ignore_missing_imports = true

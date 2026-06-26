@@ -1,0 +1,53 @@
+# --- Secrets (Invariant 6 / §10): never commit keys ---
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+vault/
+
+# --- Freqtrade / runtime state ---
+user_data/
+*.sqlite
+*.sqlite-journal
+
+# --- Data caches & logs (§7 checkpoint) ---
+*.parquet
+data/parquet/
+data/cache/
+logs/
+*.log
+
+# --- Event store runtime files (audit log lives outside git) ---
+events/*.jsonl
+
+# --- LLM slow-loop state files (runtime, TTL'd — §3) ---
+sentiment_state.json
+regime_state.json
+
+# --- CodeGraph index (rebuilt locally) ---
+.codegraph/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# --- OS / editor ---
+.DS_Store
+.idea/
+.vscode/
+*.swp

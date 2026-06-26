@@ -1,0 +1,13 @@
+{
+  "_comment": "Declarative params for the deliberately-dumb first strategy (§5). HASH-LOCKED by core/config (§15). Strict parameter budget (1-2 params) — this strategy's only job is to exercise the pipeline end-to-end. If it looks profitable, suspect the harness before believing in edge. Pairs/timeframe/fee tier are confirmed with the operator at ORIENT (§7) before backtest.",
+  "schema_version": 1,
+  "name": "ema_cross",
+  "params": {
+    "ema_fast": 12,
+    "ema_slow": 26
+  },
+  "timeframe": "1h",
+  "target_regime": "trend",
+  "pairs": [],
+  "_pairs_note": "StaticPairlist required for reproducibility (§8.8); fill in at ORIENT with the operator's confirmed venue/pairs."
+}
