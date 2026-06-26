@@ -82,7 +82,11 @@ drawdown kill −12% (non-overridable) · de-peg > 1% · human heartbeat 7d · l
   soft/hard inversion; `Order`/`PortfolioState` construct and reject nonsensical values.
 - **Proof:** `pytest tests/risk/test_types.py tests/risk/test_config.py -q`.
 
-### R1 — Position sizing + order-size feasibility (`src/risk/sizing.py`)
+### R1 — Position sizing + order-size feasibility (`src/risk/sizing.py`) ✅
+> Done: `compute_size()` — inverse-ATR sizing, fractional-Kelly notional cap, price→tick-floor,
+> qty→lot-floor, minNotional check. Sub-minimum/below-lot → `SizingResult(feasible=False)` with a
+> reason; **never rounds up past the risk cap**. `to_order()` only on feasible. 11 tests incl.
+> the sub-minimum-SKIP drill and a realized-risk-≤-budget property.
 - **Do:** `compute_size(order_intent, state, cfg, atr)`:
   - risk_amount = equity × per_trade_pct; **inverse-ATR**: qty = risk_amount / (k×ATR stop
     distance); fixed-fractional fallback. Cap at **fractional-Kelly ≤ ½** — never raw Kelly.

@@ -86,8 +86,14 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
   PortfolioState/RiskDecision + RiskConfig loader that refuses leverage>0 (Inv. 4) and soft/hard
   inversion (§15 config-integrity, config-only). **Proof:** `pytest tests/risk/` → 22 passed.
   Full suite: **98 passed**, ruff clean.
-- **Next:** R1 `risk/sizing.py` (money code) — inverse-ATR + fractional-Kelly cap + minNotional/
-  lot/tick feasibility with **sub-minimum → SKIP, never round up past the risk cap**.
+- **R1 (`src/risk/sizing.py`, money code §4/§9):** `compute_size()` — inverse-ATR sizing (higher
+  ATR → smaller size), fractional-Kelly notional cap, price floored to tick / qty floored to lot,
+  minNotional enforced. Sub-minimum or below-lot → `SizingResult(feasible=False, reason=...)`;
+  **never rounds up past the risk cap** to meet the exchange minimum. **Proof:**
+  `pytest tests/risk/test_sizing.py` → 11 passed incl. the sub-minimum-SKIP drill, lot/tick
+  round-DOWN, and a realized-risk-≤-budget property. Full suite: **109 passed**, ruff clean.
+- **Next:** R2 `risk/limits.py` (money code) — per-trade / gross / per-asset / concurrency /
+  daily soft vs hard / drawdown kill / correlation-cluster (treat >0.7-corr as one) + beta.
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 
