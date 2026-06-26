@@ -27,14 +27,25 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
 **Proven:** nothing yet — this is structure only.
 **Not done:** no data layer, no quality gate, no strategy, no risk logic, no tests.
 
+## ORIENT decisions (§7 — being filled in with the operator)
+
+| Item | Status | Decision |
+|------|--------|----------|
+| Exchange entity | ✅ decided | **Trade = Binance Japan**; **view = Binance Global** (read-only, operator UI only). See ADR 0002. |
+| Target pairs | ⛔ pending | Must be JFSA-listed on Binance Japan; needed for the StaticPairlist (§8.8). |
+| Timeframe | ⛔ pending | e.g. 1h (current ema_cross default) — confirm with operator. |
+| Actual fee tier | ⛔ pending | VIP level / BNB & maker-taker discounts — wrong tier biases the backtest (§8.3). |
+| Operator KYC / ToS | ⛔ operator to verify | Confirm eligibility on Binance Japan + that its ToS permits API/bot spot trading (§11). |
+| Exact ccxt id/endpoint for the JP entity | ⛔ pending | Verify against current docs — do NOT invent (§7/§10). |
+
 ## Next slice (P0, first work item)
 
 Per §7 build order — **data → quality gate → harness → dumb strategy → dry-run → risk wiring**.
 Recommended first slice: `src/data/feed.py` + `src/data/store.py` + `src/data/quality.py` with
 TDD on the quality gate (§8.1), proven by a reproducible OHLCV pull + quarantine unit tests.
 
-Before writing code, run the `autonomous-coding-loop` **ORIENT** step: confirm exchange, target
-pairs, and timeframe with the operator (blocking if unset — §7), then write `PLAN.md`.
+**Blocked until** the remaining ⛔ ORIENT items above are confirmed (pairs, timeframe, fee tier,
+ccxt endpoint). Once confirmed, write `PLAN.md` (slices, each with a proof command) and begin.
 
 ## Phase ledger
 

@@ -8,6 +8,8 @@
   },
   "timeframe": "1h",
   "target_regime": "trend",
+  "trading_venue": "binance_japan",
+  "_venue_note": "Trading venue = Binance Japan only (ADR 0002, §10/§11). Pairs must be JFSA-listed on the Japan entity. Binance Global is viewing-only and never feeds this strategy.",
   "pairs": [],
-  "_pairs_note": "StaticPairlist required for reproducibility (§8.8); fill in at ORIENT with the operator's confirmed venue/pairs."
+  "_pairs_note": "StaticPairlist required for reproducibility (§8.8); fill in at ORIENT with the operator's confirmed Binance Japan pairs + timeframe + actual fee tier."
 }
