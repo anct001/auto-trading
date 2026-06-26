@@ -127,10 +127,19 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
 
 ### Risk engine (PLAN_RISK) — R0–R7 COMPLETE
 All risk money-code slices done & tested: types/config, sizing, limits, de-peg, exchange
-assertions, kill-switch/dead-man's, the single-gate engine, runtime tighten-only. **Remaining
-integration follow-ups** (not core logic): (a) wire `risk/sizing.compute_size` into the backtest
-to replace the full-equity placeholder; (b) emit RiskPassed/Rejected to `events/log.py` once it
-exists; (c) the CodeGraph convergence check when `execution/` is built. Then the P0 DONE-GATE.
+assertions, kill-switch/dead-man's, the single-gate engine, runtime tighten-only.
+
+### 2026-06-26 — integration (a): risk sizing wired into the backtest
+- `backtest/runner.py`: new `RiskSizing` policy — supplying it sizes each entry via the live
+  `risk.sizing.compute_size` (inverse-ATR, per-trade-capped, **SKIPPED when sub-minimum**)
+  instead of the full-equity placeholder (kept as an engine-mechanics test fixture). Backtest and
+  live now size through one path (no skew). Trades gained a `qty` column. **Proof:**
+  `pytest tests/backtest/test_runner_risk.py` → 5 passed (qty matches compute_size, deploys < full
+  equity, respects per-trade budget, sub-minimum skipped, reproducible). Full suite: **172
+  passed**, ruff clean.
+- **Remaining integration follow-ups:** (b) emit RiskPassed/Rejected to `events/log.py` once it
+  exists; (c) CodeGraph convergence check when `execution/` is built. Then the P0 DONE-GATE.
+- **Next (sequential):** (b) `events/log.py` — append-only, secret-redacted event log (§15).
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 

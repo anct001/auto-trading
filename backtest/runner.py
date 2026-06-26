@@ -27,7 +27,23 @@ from typing import Protocol
 
 import pandas as pd
 
+from src.features.indicators import atr as atr_fn
+from src.risk.config import RiskConfig
+from src.risk.sizing import MarketConstraints, compute_size
+from src.risk.types import PortfolioState
 from src.strategy.base import INTENT_ENTER_LONG, INTENT_EXIT
+
+
+@dataclass(frozen=True)
+class RiskSizing:
+    """Size entries through the live risk path (risk.sizing.compute_size) instead of the
+    full-equity placeholder. Supplying this makes the backtest and live size identically."""
+
+    cfg: RiskConfig
+    market: MarketConstraints
+    pair: str = "BACKTEST"
+    atr_period: int = 14
+    atr_stop_mult: float = 2.0
 
 
 @dataclass(frozen=True)
@@ -62,7 +78,7 @@ class BacktestResult:
     stats: dict
 
 
-_TRADE_COLUMNS = ["entry_time", "entry_price", "exit_time", "exit_price", "return"]
+_TRADE_COLUMNS = ["entry_time", "entry_price", "exit_time", "exit_price", "qty", "return"]
 
 
 def run_backtest(
@@ -71,13 +87,20 @@ def run_backtest(
     *,
     costs: Costs | None = None,
     initial_equity: float = 1.0,
+    risk: RiskSizing | None = None,
 ) -> BacktestResult:
-    """Run a deterministic spot long-or-flat backtest. See module docstring for the model."""
+    """Run a deterministic spot long-or-flat backtest. See module docstring for the model.
+
+    With ``risk`` set, each entry is sized via the live risk path (compute_size): inverse-ATR,
+    per-trade-capped, and SKIPPED when sub-minimum. Without it, the full-equity placeholder is
+    used (a test fixture for the engine mechanics, not a production sizing policy).
+    """
     costs = costs or Costs()
     signals = strategy.generate_signals(df).to_numpy()
     ts = pd.to_datetime(df["timestamp"], utc=True).to_numpy()
     opens = df["open"].to_numpy(dtype="float64")
     closes = df["close"].to_numpy(dtype="float64")
+    atr_series = atr_fn(df, risk.atr_period).to_numpy() if risk else None
     n = len(df)
 
     cash = float(initial_equity)
@@ -88,12 +111,31 @@ def run_backtest(
     equity_curve = []
 
     def _open_position(i: int) -> None:
+        """Open a long at bar i's open. Returns silently without opening if risk sizing skips."""
         nonlocal cash, units, in_position, entry_time, entry_price, entry_equity
         fill = opens[i] * (1 + costs.slippage)
-        fee = cash * costs.taker_fee
+        if risk is None:
+            # full-equity placeholder: deploy all cash (fee taken from cash)
+            qty = (cash - cash * costs.taker_fee) / fill
+            spend = cash
+        else:
+            atr_i = atr_series[i]
+            if not (atr_i > 0):  # NaN warmup or zero vol → no risk-based size
+                return
+            state = PortfolioState(equity=cash, peak_equity=cash, day_start_equity=cash)
+            sized = compute_size(
+                pair=risk.pair, price=opens[i], atr=atr_i, state=state,
+                cfg=risk.cfg, market=risk.market, atr_stop_mult=risk.atr_stop_mult,
+            )
+            if not sized.feasible:
+                return  # SKIP — never round up to meet the minimum (§4/§9)
+            qty = sized.qty
+            spend = qty * fill * (1 + costs.taker_fee)
+            if spend > cash:
+                return  # unaffordable (defensive; risk sizing keeps this well under cash)
         entry_equity = cash
-        units = (cash - fee) / fill
-        cash = 0.0
+        cash -= spend
+        units = qty
         in_position = True
         entry_time, entry_price = ts[i], fill
 
@@ -101,13 +143,14 @@ def run_backtest(
         nonlocal cash, units, in_position
         fill = price * (1 - costs.slippage)
         proceeds = units * fill
-        cash = proceeds * (1 - costs.taker_fee)
+        cash += proceeds * (1 - costs.taker_fee)
         trades.append(
             {
                 "entry_time": entry_time,
                 "entry_price": entry_price,
                 "exit_time": ts[i],
                 "exit_price": fill,
+                "qty": units,
                 "return": cash / entry_equity - 1.0,
             }
         )
