@@ -35,7 +35,16 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
   Mockable via injected exchange. **Proof:** `pytest tests/data/test_feed.py -q` → 18 passed
   (forming-candle drop, close-boundary keep, UTC+monotonic, timeframe parsing, empty, fetch
   wiring). Full suite: 20 passed, ruff clean.
-- **Next:** Slice 2 — `src/data/store.py` (reproducible Parquet round-trip).
+- **Slice 2 (`src/data/store.py`):** reproducible Parquet write/read/upsert; canonical form
+  (UTC µs timestamps, sorted, deduped last-wins); idempotent upsert, conflict-newer-wins.
+  **Proof:** `pytest tests/data/test_store.py` → 6 passed.
+- **Slice 3 (`src/data/quality.py`, §8.1 — the gate):** partitions OHLCV into clean vs
+  quarantined with a reason — duplicate/out-of-order timestamps, non-positive prices,
+  OHLC inconsistency, negative volume, >N×ATR spikes. A quarantined candle never reaches the
+  clean frame (so never a signal/trade). **Proof:** `pytest tests/data/test_quality.py` →
+  9 passed (one per defect class + clean passthrough + empty). Full suite: **35 passed**, ruff
+  clean.
+- **Next:** Slice 4 — `src/features/indicators.py` (single feature path: EMA first).
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 
