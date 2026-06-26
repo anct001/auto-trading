@@ -27,6 +27,16 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
 **Proven:** nothing yet — this is structure only.
 **Not done:** no data layer, no quality gate, no strategy, no risk logic, no tests.
 
+### 2026-06-26 — P0 BUILD: Slice 0 + Slice 1
+- **Slice 0 (dev env):** pinned runtime deps in `pyproject.toml` (ccxt 4.5, pandas, pyarrow,
+  numpy); installed `.[dev]`. Proof: `pytest -q` green, `ruff check .` clean.
+- **Slice 1 (`src/data/feed.py`):** ccxt OHLCV fetch returning **closed candles only** — the
+  still-forming candle is dropped (no look-ahead, §8.4); UTC tz-aware, ascending, numeric.
+  Mockable via injected exchange. **Proof:** `pytest tests/data/test_feed.py -q` → 18 passed
+  (forming-candle drop, close-boundary keep, UTC+monotonic, timeframe parsing, empty, fetch
+  wiring). Full suite: 20 passed, ruff clean.
+- **Next:** Slice 2 — `src/data/store.py` (reproducible Parquet round-trip).
+
 ## ORIENT decisions (§7 — being filled in with the operator)
 
 | Item | Status | Decision |

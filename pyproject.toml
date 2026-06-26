@@ -11,10 +11,18 @@ requires-python = ">=3.11"
 license = { text = "Proprietary" }
 authors = [{ name = "anct001" }]
 
-# Runtime dependencies are intentionally NOT pinned yet — this is the P0 scaffold.
-# Add them slice-by-slice as the data → harness → strategy → risk wiring lands (§7),
-# justifying any deviation from the §2 reference stack in PLAN.md.
-dependencies = []
+# Runtime deps grow slice-by-slice (§7 / PLAN.md). P0 data harness needs:
+#   ccxt    — exchange connectivity + OHLCV (§2, §9)
+#   pandas  — OHLCV frames (single feature path, §15)
+#   pyarrow — Parquet store (§2)
+#   numpy   — indicator math (§15)
+# Freqtrade/vectorbt/ollama enter in later slices/phases.
+dependencies = [
+  "ccxt>=4.5,<5",
+  "pandas>=2.2",
+  "pyarrow>=15",
+  "numpy>=1.26",
+]
 
 [project.optional-dependencies]
 dev = [
