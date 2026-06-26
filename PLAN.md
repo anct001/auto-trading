@@ -62,12 +62,19 @@ Python 3.11+ · ccxt (data + connectivity) · pandas + pyarrow (Parquet) · Freq
   expected bars; no look-ahead (decision at bar *t* uses only data ≤ *t* closed).
   `pytest tests/strategy/test_ema_cross.py -q`.
 
-### Slice 6 — Backtest harness, reproducible (`backtest/runner.py`) **(needs fee tier)**
-- **Do:** Freqtrade integration with a **StaticPairlist** (BTC/USDT), the operator's **actual
-  fee tier**, and explicit non-zero slippage (§8.3). Pin data/seed/config/pairlist.
-- **Proof:** run the backtest twice → **identical** metrics (reproducibility, §8.8). Costs
-  non-zero. `python -m backtest.runner --config ... ` twice, diff the results = empty.
-  *(Blocked on the fee-tier ORIENT item.)*
+### Slice 6 — Backtest harness, reproducible (`backtest/runner.py`) ✅
+- **DEVIATION FROM §2 (justified per §7):** §2 names Freqtrade as the backtest backbone. For the
+  P0 gate (reproducible backtest + modeled costs + metrics) an **in-house deterministic runner**
+  is used instead — it consumes the same single feature path + strategy code (no skew) and is
+  trivially reproducible, without Freqtrade's heavy system deps. **Freqtrade is reintroduced at
+  P3**, where its dry-run live-parity (its unique value) actually earns its place. Operator may
+  override. Cost model pinned in `config/backtest/costs.json` (VIP0: 0.10%/0.10%, slippage 0.05%).
+- **Done:** signal fills at bar t+1 open (no look-ahead); full-equity placeholder sizing (real
+  sizing is the risk engine's job, later money-code slice); taker fee + slippage on each fill;
+  trades + equity curve + basic stats (trade_count, final_equity, total_return, max_drawdown).
+- **Proof:** `pytest tests/backtest/test_runner.py` → 7 passed incl. reproducible identical
+  reruns (§8.8), next-open fill timing, exact cost math, force-close at end, real-EmaCross
+  determinism.
 
 ### Slice 7 — Walk-forward + metrics (`backtest/walkforward.py`)
 - **Do:** out-of-sample split + walk-forward; compute CAGR, max drawdown, Calmar, Sharpe,

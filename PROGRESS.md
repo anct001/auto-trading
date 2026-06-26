@@ -53,8 +53,16 @@ harness + 1 dumb strategy, all *proven* (not asserted). A green backtest number 
   fast/slow EMA crossover, long-or-flat. **Proof:** `pytest tests/strategy/test_ema_cross.py`
   → 8 passed incl. a **causality test** (signal at bar t identical on prefix vs full frame →
   no look-ahead). Full suite: **50 passed**, ruff clean.
-- **Next:** Slice 6 — `backtest/runner.py` (Freqtrade + StaticPairlist). ⛔ needs the operator's
-  actual fee tier (§8.3).
+- **Slice 6 (`backtest/runner.py`, §8):** deterministic backtest — fills at bar t+1 open (no
+  look-ahead), taker fee + slippage per fill, full-equity placeholder sizing (real sizing =
+  risk engine, later), trades + equity curve + basic stats. **DEVIATION (justified §7):**
+  in-house runner instead of Freqtrade for P0; Freqtrade returns at P3 for dry-run parity (see
+  PLAN.md Slice 6). Cost model pinned in `config/backtest/costs.json` (VIP0, no BNB, slippage
+  0.05%). **Proof:** `pytest tests/backtest/test_runner.py` → 7 passed (reproducible reruns
+  §8.8, fill timing, cost math, force-close, real-EmaCross determinism). Full suite: **57
+  passed**, ruff clean.
+- **Next:** Slice 7 — `backtest/walkforward.py` (OOS + walk-forward + full metric suite
+  Calmar/Sharpe/Sortino + ≥100-trade sample gate).
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 
