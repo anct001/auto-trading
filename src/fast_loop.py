@@ -16,6 +16,8 @@ tests/test_fast_loop.py exercise the composition against a mock exchange.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Callable
 
 import pandas as pd
 
@@ -33,9 +35,12 @@ from src.execution.stops import StopManager, StopResult, protective_stop_price
 from src.features.indicators import atr as atr_fn
 from src.risk import engine
 from src.risk.config import RiskConfig
+from src.llm.sentiment import SentimentState, size_haircut
 from src.risk.sizing import MarketConstraints, compute_size
 from src.risk.types import Order, PortfolioState, RiskDecision
 from src.strategy.base import INTENT_ENTER_LONG, INTENT_EXIT
+
+SENTIMENT_HAIRCUT = "SentimentHaircut"
 
 _HELD_EPS = 1e-12  # treat a dust-sized residual position as flat (float-safe)
 
@@ -63,6 +68,8 @@ class FastLoop:
         pair: str,
         atr_period: int = 14,
         atr_stop_mult: float = 2.0,
+        sentiment_provider: Callable[[], SentimentState | None] | None = None,
+        now_fn: Callable[[], datetime] | None = None,
     ):
         self.broker = broker
         self.stops = stops
@@ -73,6 +80,11 @@ class FastLoop:
         self.pair = pair
         self.atr_period = atr_period
         self.atr_stop_mult = atr_stop_mult
+        # Optional slow-loop sentiment haircut (§3, P1). The provider reads a local state file —
+        # it NEVER calls the LLM synchronously, so the fast loop never blocks on it (Inv. 2).
+        # Absent provider, or cfg.sentiment_floor == 1.0, means the feature is a strict no-op.
+        self.sentiment_provider = sentiment_provider
+        self.now_fn = now_fn or (lambda: datetime.now(timezone.utc))
 
     def tick(
         self,
@@ -104,10 +116,35 @@ class FastLoop:
             return self._exit(state, ctx, price, held, client_order_id)
         return TickResult("hold", intent)
 
+    def _sentiment_multiplier(self) -> float:
+        """Resolve the bounded slow-loop size haircut for this entry (§3, P1).
+
+        Non-vetoing, non-blocking, fail-to-neutral: no provider / no state / stale / unknown pair
+        → 1.0 (no effect). With cfg.sentiment_floor == 1.0 (the default) the result is always 1.0.
+        A sub-1.0 multiplier is logged on the entry so the audit trail records what the LLM did.
+        """
+        if self.sentiment_provider is None:
+            return 1.0
+        try:
+            state = self.sentiment_provider()
+        except Exception:
+            return 1.0  # the LLM/state path must never break a trade decision (Inv. 2)
+        multiplier = size_haircut(
+            state, self.pair, now=self.now_fn(), floor=self.cfg.sentiment_floor
+        )
+        if multiplier < 1.0:
+            reading = state.pairs.get(self.pair) if state is not None else None
+            self.events.append(SENTIMENT_HAIRCUT, {
+                "pair": self.pair, "multiplier": multiplier,
+                "rationale": reading.rationale if reading else "",
+            })
+        return multiplier
+
     def _enter(self, state, ctx, price, atr_now, client_order_id) -> TickResult:
+        multiplier = self._sentiment_multiplier()
         sized = compute_size(
             pair=self.pair, price=price, atr=atr_now, state=state, cfg=self.cfg,
-            market=self.market, atr_stop_mult=self.atr_stop_mult,
+            market=self.market, atr_stop_mult=self.atr_stop_mult, size_multiplier=multiplier,
         )
         if not sized.feasible:
             self.events.append("EntrySkipped", {"pair": self.pair, "reason": sized.reason})

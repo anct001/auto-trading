@@ -7,6 +7,8 @@ together and that every order still passes the risk gate (Inv. 3/9).
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pandas as pd
 
 from src.events.log import (
@@ -20,7 +22,8 @@ from src.events.log import (
 )
 from src.execution.broker import Broker
 from src.execution.stops import StopManager
-from src.fast_loop import FastLoop
+from src.fast_loop import SENTIMENT_HAIRCUT, FastLoop
+from src.llm.sentiment import PairSentiment, SentimentState
 from src.risk import engine
 from src.risk.config import RiskConfig
 from src.risk.killswitch import KillSwitch
@@ -30,6 +33,7 @@ from src.strategy.base import INTENT_ENTER_LONG, INTENT_EXIT, INTENT_HOLD
 
 HOUR = pd.Timedelta(hours=1)
 T0 = pd.Timestamp("2024-01-01T00:00:00Z")
+NOW = datetime(2026, 6, 27, 12, 0, 0, tzinfo=timezone.utc)
 PAIR = "BTC/USDT"
 _MARKET = MarketConstraints(min_notional=10.0, lot_step=1e-5, tick_size=0.1)
 _GOOD_EXCHANGE = {"spot_mode": True, "leverage": 1, "margin_disabled": True,
@@ -169,3 +173,88 @@ def test_exit_flow_sells_the_held_position(tmp_path):
     res = _loop(ex, events, FakeStrategy(INTENT_EXIT)).tick(_frame(), state, _ctx(), client_order_id="x1")
     assert res.action == "exit"
     assert any(c["side"] == "sell" for c in ex.created)
+
+
+# ---- P1 sentiment haircut wiring (§3) --------------------------------------------------------
+
+def _cfg_floor(floor):
+    d = {
+        "per_trade_risk_pct": 0.5, "position_sizing": "inverse_atr", "max_fractional_kelly": 0.5,
+        "max_concurrent_positions": 3, "gross_exposure_pct": 100, "per_asset_cap_pct": 25,
+        "correlation": {"cluster_corr_threshold": 0.7, "cluster_exposure_cap_pct": 40},
+        "daily_loss_limits": {"soft_pct": -2.0, "hard_pct": -4.0}, "max_drawdown_killswitch_pct": -12.0,
+        "depeg_guard": {"quote_assets": ["USDT"], "threshold_pct": 1.0},
+        "capital_on_exchange_cap": None, "human_heartbeat_days": 7, "leverage": 0,
+        "exchange_assertions": dict(_GOOD_EXCHANGE), "sentiment_floor": floor,
+    }
+    return RiskConfig.from_dict(d)
+
+
+def _loop_sentiment(exchange, events, strategy, cfg, provider):
+    markets = {PAIR: _MARKET}
+    return FastLoop(
+        broker=Broker(exchange, markets), stops=StopManager(exchange, markets), events=events,
+        strategy=strategy, cfg=cfg, market=_MARKET, pair=PAIR, atr_period=3, atr_stop_mult=2.0,
+        sentiment_provider=provider, now_fn=lambda: NOW,
+    )
+
+
+def _bearish_state(sentiment=-1.0, confidence=1.0):
+    return SentimentState(schema_version=1, generated_at=NOW, ttl_seconds=600,
+                          pairs={PAIR: PairSentiment(sentiment, confidence, "bearish news")})
+
+
+def test_default_floor_1_makes_sentiment_a_no_op(tmp_path):
+    # FLOOR=1.0 (project default): even a max-bearish reading must not change the size
+    ex_plain, ex_sent = FakeExchange(), FakeExchange()
+    base = _loop(ex_plain, EventLog(tmp_path / "a.jsonl"), FakeStrategy(INTENT_ENTER_LONG)).tick(
+        _frame(), _state(), _ctx(), client_order_id="t1")
+    sent = _loop_sentiment(ex_sent, EventLog(tmp_path / "b.jsonl"), FakeStrategy(INTENT_ENTER_LONG),
+                           _cfg_floor(1.0), lambda: _bearish_state()).tick(
+        _frame(), _state(), _ctx(), client_order_id="t1")
+    assert base.submit.amount == sent.submit.amount  # identical size → P0 path preserved
+    assert SENTIMENT_HAIRCUT not in [e.type for e in EventLog(tmp_path / "b.jsonl").read_all()]
+
+
+def test_active_floor_shrinks_size_and_logs(tmp_path):
+    ex_plain, ex_sent = FakeExchange(), FakeExchange()
+    base = _loop(ex_plain, EventLog(tmp_path / "a.jsonl"), FakeStrategy(INTENT_ENTER_LONG)).tick(
+        _frame(), _state(), _ctx(), client_order_id="t1")
+    events = EventLog(tmp_path / "b.jsonl")
+    sent = _loop_sentiment(ex_sent, events, FakeStrategy(INTENT_ENTER_LONG),
+                           _cfg_floor(0.5), lambda: _bearish_state()).tick(
+        _frame(), _state(), _ctx(), client_order_id="t1")
+    assert sent.action == "enter"
+    assert sent.submit.amount < base.submit.amount  # bearish + active floor → smaller
+    haircuts = [e for e in events.read_all() if e.type == SENTIMENT_HAIRCUT]
+    assert len(haircuts) == 1 and haircuts[0].payload["multiplier"] == 0.5
+
+
+def test_absent_state_with_active_floor_is_neutral(tmp_path):
+    ex_plain, ex_sent = FakeExchange(), FakeExchange()
+    base = _loop(ex_plain, EventLog(tmp_path / "a.jsonl"), FakeStrategy(INTENT_ENTER_LONG)).tick(
+        _frame(), _state(), _ctx(), client_order_id="t1")
+    sent = _loop_sentiment(ex_sent, EventLog(tmp_path / "b.jsonl"), FakeStrategy(INTENT_ENTER_LONG),
+                           _cfg_floor(0.5), lambda: None).tick(  # provider returns no state
+        _frame(), _state(), _ctx(), client_order_id="t1")
+    assert sent.submit.amount == base.submit.amount  # no state → neutral, runs normally
+
+
+def test_sentiment_never_triggers_an_entry_on_hold(tmp_path):
+    # a bearish reading on a HOLD intent must not create a trade (haircut can't trigger/flip)
+    ex = FakeExchange()
+    res = _loop_sentiment(ex, EventLog(tmp_path / "e.jsonl"), FakeStrategy(INTENT_HOLD),
+                          _cfg_floor(0.5), lambda: _bearish_state()).tick(
+        _frame(), _state(), _ctx(), client_order_id="t1")
+    assert res.action == "hold"
+    assert ex.created == []
+
+
+def test_provider_exception_does_not_break_the_trade(tmp_path):
+    def boom():
+        raise RuntimeError("ollama down")
+    ex = FakeExchange()
+    res = _loop_sentiment(ex, EventLog(tmp_path / "e.jsonl"), FakeStrategy(INTENT_ENTER_LONG),
+                          _cfg_floor(0.5), boom).tick(
+        _frame(), _state(), _ctx(), client_order_id="t1")
+    assert res.action == "enter"  # LLM path failure → neutral, trade proceeds (Inv. 2)

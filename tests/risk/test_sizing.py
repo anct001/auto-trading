@@ -56,6 +56,53 @@ def test_inverse_atr_sizing_math():
     assert math.isclose(res.notional, 2500.0, rel_tol=1e-9)
 
 
+def test_size_multiplier_default_is_no_op():
+    # default 1.0 must reproduce the unmodified sizing math exactly (P0 path unchanged)
+    common = dict(pair="BTC/USDT", price=10000.0, atr=100.0, state=_state(10000.0),
+                  cfg=_cfg(), market=_LOOSE, atr_stop_mult=2.0)
+    base = compute_size(**common)
+    with_default = compute_size(size_multiplier=1.0, **common)
+    assert (with_default.qty, with_default.notional) == (base.qty, base.notional)
+
+
+def test_size_multiplier_shrinks_the_risk_budget():
+    # 0.5 multiplier halves the risk budget → halves the qty (50/200 → 0.125)
+    res = compute_size(
+        pair="BTC/USDT", price=10000.0, atr=100.0, state=_state(10000.0),
+        cfg=_cfg(), market=_LOOSE, atr_stop_mult=2.0, size_multiplier=0.5,
+    )
+    assert res.feasible
+    assert math.isclose(res.qty, 0.125, rel_tol=1e-9)
+
+
+def test_size_multiplier_above_one_is_clamped_never_grows():
+    # the LLM must never be able to GROW a position (Inv. 1/3): >1.0 clamps to the base size
+    common = dict(pair="BTC/USDT", price=10000.0, atr=100.0, state=_state(10000.0),
+                  cfg=_cfg(), market=_LOOSE, atr_stop_mult=2.0)
+    base = compute_size(**common)
+    grown = compute_size(size_multiplier=2.0, **common)
+    assert grown.qty == base.qty
+
+
+def test_size_multiplier_can_push_below_minimum_and_skip():
+    # shrinking a near-minimum size below min_notional must SKIP, not round up
+    market = MarketConstraints(min_notional=2000.0, lot_step=0.0001, tick_size=0.01)
+    common = dict(pair="BTC/USDT", price=10000.0, atr=100.0, state=_state(10000.0),
+                  cfg=_cfg(), market=market, atr_stop_mult=2.0)
+    assert compute_size(**common).feasible  # 2500 notional clears 2000
+    haircut = compute_size(size_multiplier=0.5, **common)  # → ~1250 notional
+    assert not haircut.feasible
+    assert haircut.reason == "below_min_notional"
+
+
+def test_non_positive_size_multiplier_is_infeasible():
+    res = compute_size(
+        pair="BTC/USDT", price=10000.0, atr=100.0, state=_state(10000.0),
+        cfg=_cfg(), market=_LOOSE, atr_stop_mult=2.0, size_multiplier=0.0,
+    )
+    assert not res.feasible
+
+
 def test_higher_atr_gives_smaller_size():
     common = dict(pair="BTC/USDT", price=10000.0, state=_state(10000.0), cfg=_cfg(), market=_LOOSE)
     small_vol = compute_size(atr=100.0, **common)

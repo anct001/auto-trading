@@ -23,6 +23,8 @@
   "capital_on_exchange_cap": null,
   "human_heartbeat_days": 7,
   "leverage": 0,
+  "sentiment_floor": 1.0,
+  "_sentiment_floor_note": "LLM sentiment size-haircut floor (§3, P1). The haircut multiplier lives in [floor, 1.0]. Default 1.0 = feature DISABLED (logged, not acting) until forward-validated by ablation (§6). Lower it (>=0.5) only after the P1 DONE-GATE shows it helps forward.",
   "exchange_assertions": {
     "spot_mode": true,
     "leverage": 1,

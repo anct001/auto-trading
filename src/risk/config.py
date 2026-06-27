@@ -34,6 +34,7 @@ class RiskConfig:
     human_heartbeat_days: int
     leverage: int
     exchange_assertions: dict[str, Any]
+    sentiment_floor: float = 1.0
 
     def __post_init__(self) -> None:
         if self.per_trade_risk_pct <= 0:
@@ -61,6 +62,9 @@ class RiskConfig:
             raise ValueError("human_heartbeat_days must be >= 1")
         if self.leverage != 0:
             raise ValueError("leverage must be 0 before Phase 5 (Invariant 4)")
+        # the LLM sentiment haircut may only tighten within a hard floor (§3); 1.0 = disabled
+        if not (0.5 <= self.sentiment_floor <= 1.0):
+            raise ValueError("sentiment_floor must be in [0.5, 1.0] (§3); default 1.0 = disabled")
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "RiskConfig":
@@ -88,6 +92,7 @@ class RiskConfig:
             human_heartbeat_days=int(d["human_heartbeat_days"]),
             leverage=int(d["leverage"]),
             exchange_assertions=dict(d.get("exchange_assertions", {})),
+            sentiment_floor=float(d.get("sentiment_floor", 1.0)),
         )
 
     @classmethod

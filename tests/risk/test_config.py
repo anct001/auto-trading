@@ -70,3 +70,22 @@ def test_rejects_nonnegative_drawdown_kill():
     d["max_drawdown_killswitch_pct"] = 12.0  # must be negative
     with pytest.raises(ValueError):
         RiskConfig.from_dict(d)
+
+
+def test_default_sentiment_floor_is_disabled():
+    cfg = RiskConfig.load(_DEFAULT_PATH)
+    assert cfg.sentiment_floor == 1.0  # feature off by default until forward-validated (§6)
+
+
+def test_sentiment_floor_defaults_when_absent():
+    d = _default_dict()
+    d.pop("sentiment_floor", None)
+    assert RiskConfig.from_dict(d).sentiment_floor == 1.0
+
+
+@pytest.mark.parametrize("bad", [0.4, 0.0, 1.1, -0.5])
+def test_rejects_sentiment_floor_out_of_band(bad):
+    d = _default_dict()
+    d["sentiment_floor"] = bad
+    with pytest.raises(ValueError, match="sentiment_floor"):
+        RiskConfig.from_dict(d)

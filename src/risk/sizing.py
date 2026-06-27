@@ -74,16 +74,27 @@ def compute_size(
     cfg: RiskConfig,
     market: MarketConstraints,
     atr_stop_mult: float = 2.0,
+    size_multiplier: float = 1.0,
 ) -> SizingResult:
-    """Size a new long entry for ``pair`` at ``price``. See module docstring for the model."""
+    """Size a new long entry for ``pair`` at ``price``. See module docstring for the model.
+
+    ``size_multiplier`` is an optional bounded *shrink* on the risk budget — the channel the
+    slow-loop sentiment haircut (§3, P1) uses. It can only TIGHTEN: values > 1.0 are clamped to
+    1.0 so the LLM can never grow a position (Inv. 1/3); a non-positive value is rejected
+    (fail-closed). The default 1.0 leaves the deterministic sizing untouched (P0 path). The
+    backtest never passes this (the LLM feature is forward-validated only — no look-ahead, §6).
+    """
     if price <= 0:
         return SizingResult(feasible=False, reason="invalid_price", pair=pair)
+    if size_multiplier <= 0:
+        return SizingResult(feasible=False, reason="invalid_size_multiplier", pair=pair)
     stop_distance = atr_stop_mult * atr
     if atr <= 0 or stop_distance <= 0:
         # without a volatility estimate there is no stop distance and no risk-based size
         return SizingResult(feasible=False, reason="no_volatility", pair=pair)
 
-    risk_amount = state.equity * (cfg.per_trade_risk_pct / 100.0)
+    # haircut may only shrink — clamp to ≤ 1.0 so sentiment can never increase exposure
+    risk_amount = state.equity * (cfg.per_trade_risk_pct / 100.0) * min(size_multiplier, 1.0)
     raw_qty = risk_amount / stop_distance
 
     # fractional-Kelly cap: a single bet may not deploy more than this fraction of equity
