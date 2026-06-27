@@ -26,7 +26,7 @@
 | `execution/**` broker, stops, reconcile, convergence (E1–E4) | — |
 | `llm/` sentiment (P1, inert at FLOOR=1.0) + orchestrator + Ollama backend + **journal + hypothesis_gen (P2)** | — |
 | `backtest/` **multiple_testing (deflated Sharpe) + hypothesis (validate_hypothesis)** (P2 §5) | — |
-| `ui/` preview (Inv 9) + dashboard/model + **api/server (stdlib HTTP, read-only + kill-switch) + screener + agent_view** | market chart/heatmap **pixels** (HTML/JS front-end) |
+| `ui/` preview (Inv 9) + dashboard/model + api/server (stdlib HTTP + dashboard & **markets** pages) + screener + agent_view + **markets** | coin-detail K-line / order-book / order-panel pixels; live-state wiring |
 | `events/log` (append-only, secret-redacted) · `core/` (config hash-lock, secrets, clock, console) | — |
 | `fast_loop.py` (the §3 keystone, sentiment-wired) · `dry_run.py` (paper CLI, `--sentiment-state`) | — |
 
@@ -111,7 +111,8 @@ python scripts/dryrun_parity.py --exchange bitbank --pair BTC/JPY --days 30
    — **control dashboard DONE end-to-end**: `ui/server.py` (stdlib HTTP transport + `index_html()`
    page at `GET /`, `python -m src.ui.server`), `ui/screener.py`, `ui/agent_view.py`. Only the
    richer *market* surfaces (watchlist/coin-detail K-line/heatmap pixels, need a multi-asset feed)
-   remain; **(b) the gate
+   + `ui/markets.py` (`/markets` watchlist+heatmap, `/api/markets`) are DONE. Only coin-detail
+   K-line / order-book / order-panel pixels + wiring the server to live dry-run state remain; **(b) the gate
    itself (operational)** — a **≥30-day continuous dry-run** on bitbank BTC/JPY (no crash),
    `dryrun_parity` green, and **restart-safety** verified (kill mid-trade → clean reconcile, no
    double-trade, §9). Then reintroduce Freqtrade for dry-run fill parity.

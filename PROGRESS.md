@@ -343,10 +343,15 @@ signal, regime, sentiment haircut, position, kill-switch; reuses the loop's exac
 Then `index_html()` — a self-contained operator **control dashboard page** (no CDN) served at
 `GET /` by the stdlib transport: equity, P&L vs daily limits, drawdown vs kill-switch, exposure,
 positions, decision log, + kill-switch engage/re-arm controls (live smoke: 200 text/html).
-Full suite **376→399**, ruff clean. The §12 **control dashboard is now end-to-end viewable**.
-**Remaining (UI):** only the richer *market* surfaces — watchlist/coin-detail K-line/heatmap
-pixels (need a multi-asset live feed). **Remaining (gate, operational):** ≥30-day dry-run on
-bitbank + parity + §9 restart-safety.
+The §12 **control dashboard is end-to-end viewable**. Then added `ui/markets.py` (markets
+overview/watchlist + heatmap logic over injected OHLCV — rows, sort, gainers/losers,
+screener-filterable, volume-proxy heatmap tiles) wired as `GET /api/markets` + a `/markets`
+watchlist+heatmap page; demo serves a 3-pair universe (live smoke OK). Full suite **376→408**,
+ruff clean. The §12 **UI logic is complete** (control dashboard, markets/watchlist/heatmap,
+screener, agent-view, all served by the stdlib transport). **Remaining (UI):** only coin-detail
+K-line / order-book / order-trade-panel pixels (need live order-book + multi-asset feeds), and
+wiring the server to LIVE dry-run state (demo uses a static snapshot). **Remaining (gate,
+operational):** ≥30-day dry-run on bitbank + parity + §9 restart-safety.
 
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
