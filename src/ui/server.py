@@ -164,8 +164,11 @@ def index_html() -> str:
 <h1>Operator dashboard <a href="/markets">· markets</a> <a href="/orders">· orders</a> <span id="ks" class="muted"></span></h1>
 <div class="grid" id="cards"></div>
 <div class="card" style="min-width:100%"><div class="lbl">Equity curve</div><svg id="eq" viewBox="0 0 900 130" preserveAspectRatio="none"></svg></div>
+<div class="grid" id="perf"></div>
 <div class="card" style="min-width:100%"><div class="lbl">Open positions</div><table id="pos"><thead>
 <tr><th>Pair</th><th>Qty</th><th>Value</th><th>Unrealized</th><th>Exposure %</th></tr></thead><tbody></tbody></table></div>
+<div class="card" style="min-width:100%"><div class="lbl">Closed trades</div><table id="trades"><thead>
+<tr><th>Exit time</th><th>Pair</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Return %</th><th>P&L</th></tr></thead><tbody></tbody></table></div>
 <div class="card" style="min-width:100%"><div class="lbl">Decision log</div><div id="log"></div></div>
 <div style="margin-top:12px"><button class="kill" onclick="engage()">Engage kill-switch</button>
 <button onclick="rearm()">Re-arm</button> <span id="msg" class="muted"></span></div>
@@ -200,7 +203,19 @@ async function refresh(){
    `<div class="card"><div class="lbl">${c.l}</div><div class="val ${c.c}">${c.v}</div>${c.g||""}</div>`).join("");
   drawEquity(d.equity_curve);
   const ks=d.killswitch_engaged?`<span class="bad">KILLED (${d.killswitch_reason||""})</span>`:`<span class="ok">armed</span>`;
-  document.getElementById("ks").innerHTML="· "+ks;
+  const h=d.health||{};const htxt=h.last_tick_at?`· ticks ${h.tick_count} · last ${h.last_tick_at.slice(11,19)}Z`:"";
+  document.getElementById("ks").innerHTML="· "+ks+" "+htxt;
+  const pf=d.performance||{};
+  const pfCell=!pf.trade_count?"–":(pf.profit_factor==null?"∞":pf.profit_factor.toFixed(2));
+  const perf=[["Trades",pf.trade_count??0,""],
+   ["Win rate %",pf.trade_count?(pf.win_rate*100).toFixed(1):"–",(pf.win_rate>=0.5?"ok":"warn")],
+   ["Profit factor",pfCell,(pf.profit_factor==null||pf.profit_factor>=1?"ok":"bad")],
+   ["Expectancy %",pf.trade_count?(pf.expectancy*100).toFixed(3):"–",(pf.expectancy>=0?"ok":"bad")],
+   ["Realized P&L",fmt(pf.total_pnl||0),(pf.total_pnl>=0?"ok":"bad")]];
+  document.getElementById("perf").innerHTML=perf.map(c=>
+   `<div class="card"><div class="lbl">${c[0]}</div><div class="val ${c[2]}">${c[1]}</div></div>`).join("");
+  document.querySelector("#trades tbody").innerHTML=(d.trades||[]).map(t=>
+   `<tr><td>${(t.exit_time||"").slice(0,19).replace("T"," ")}</td><td>${t.pair}</td><td>${fmt(t.qty)}</td><td>${fmt(t.entry_price)}</td><td>${fmt(t.exit_price)}</td><td class="${t.return>=0?'ok':'bad'}">${(t.return*100).toFixed(3)}</td><td class="${t.pnl>=0?'ok':'bad'}">${fmt(t.pnl)}</td></tr>`).join("")||"<tr><td class=muted>none yet</td></tr>";
   document.querySelector("#pos tbody").innerHTML=(d.positions||[]).map(p=>
    `<tr><td>${p.pair}</td><td>${fmt(p.qty)}</td><td>${fmt(p.value)}</td><td class="${p.unrealized_pnl>=0?'ok':'bad'}">${fmt(p.unrealized_pnl)}</td><td>${fmt(p.exposure_pct)}</td></tr>`).join("")||"<tr><td class=muted>flat</td></tr>";
   document.getElementById("log").innerHTML=(d.decision_log||[]).map(e=>
@@ -457,8 +472,24 @@ def build_demo_context() -> OperatorContext:
         ]
         return build_order_trade_panel(evs)
 
+    def _dashboard() -> dict:
+        from src.ui.performance import performance_summary
+        payload = dashboard_payload(state=state, cfg=cfg, prices={pair: price}, killswitch=ks)
+        demo_trades = [
+            {"exit_time": "2026-06-28T09:00:00+00:00", "pair": pair, "qty": 0.02,
+             "entry_price": 9.5e6, "exit_price": 9.9e6, "return": 0.0421, "pnl": 8000.0},
+            {"exit_time": "2026-06-28T11:00:00+00:00", "pair": pair, "qty": 0.02,
+             "entry_price": 9.9e6, "exit_price": 9.8e6, "return": -0.0101, "pnl": -2000.0},
+        ]
+        payload["trades"] = list(reversed(demo_trades))
+        payload["performance"] = performance_summary(demo_trades)
+        payload["health"] = {"running": True, "tick_count": 42,
+                             "last_tick_at": "2026-06-28T12:00:00+00:00", "pair": pair,
+                             "timeframe": "1h"}
+        return payload
+
     return OperatorContext(
-        dashboard=lambda: dashboard_payload(state=state, cfg=cfg, prices={pair: price}, killswitch=ks),
+        dashboard=_dashboard,
         preview=lambda body: preview_payload(
             pair=body.get("pair", pair), side=body.get("side", "buy"),
             qty=float(body.get("qty", 0.0) or 0.0), price=float(body.get("price", price) or price),

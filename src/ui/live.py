@@ -32,11 +32,17 @@ def build_live_context(runner) -> OperatorContext:
     market = runner.loop.market
 
     def _dashboard() -> dict:
-        return dashboard_payload(
+        from src.ui.performance import performance_summary
+        payload = dashboard_payload(
             state=runner.snapshot_state(), cfg=cfg, prices=runner.marks(),
             killswitch=runner.killswitch, events=runner.loop.events.read_all(),
             equity_history=runner.equity_history(),
         )
+        closed = runner.trades()
+        payload["trades"] = list(reversed(closed))[:50]   # newest first
+        payload["performance"] = performance_summary(closed)
+        payload["health"] = runner.health()
+        return payload
 
     def _preview(body: dict) -> dict:
         prices = runner.marks()

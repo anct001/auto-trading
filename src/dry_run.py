@@ -122,6 +122,33 @@ class DryRunner:
         self._buffer_cap = max(limit, 250)
         self._equity_history: list[dict] = []  # marked equity per tick/fill, for the UI chart
         self._equity_cap = 1000
+        self._trades: list[dict] = []          # closed round-trip trades (for performance panel)
+        self._trades_cap = 1000
+        self._tick_count = 0
+        self._last_tick_at: str | None = None
+
+    def _record_close(self, pair: str, qty: float, exit_price: float) -> None:
+        """Record a closed round-trip (caller holds the lock; call BEFORE apply_sell)."""
+        pos = self.account.positions.get(pair)
+        if pos is None:
+            return
+        entry = pos.entry_price
+        self._trades.append({
+            "exit_time": datetime.now(timezone.utc).isoformat(), "pair": pair, "qty": qty,
+            "entry_price": entry, "exit_price": exit_price,
+            "return": (exit_price / entry - 1.0) if entry else 0.0,
+            "pnl": (exit_price - entry) * qty,
+        })
+        if len(self._trades) > self._trades_cap:
+            self._trades = self._trades[-self._trades_cap:]
+
+    def trades(self) -> list[dict]:
+        with self._lock:
+            return list(self._trades)
+
+    def health(self) -> dict:
+        return {"running": True, "tick_count": self._tick_count, "last_tick_at": self._last_tick_at,
+                "pair": self.pair, "timeframe": self.timeframe}
 
     def _record_equity(self) -> None:
         """Append the current marked paper equity (caller must hold self._lock)."""
@@ -191,8 +218,11 @@ class DryRunner:
                     self.account.apply_buy(order.pair, result.submit.filled, order.price,
                                            self.costs.taker_fee)
                 elif result.action == "exit":
+                    self._record_close(order.pair, result.submit.filled, order.price)
                     self.account.apply_sell(order.pair, result.submit.filled, order.price,
                                             self.costs.taker_fee)
+            self._tick_count += 1
+            self._last_tick_at = datetime.now(timezone.utc).isoformat()
             self._record_equity()  # mark-to-market each tick for the UI equity curve
         return result
 
@@ -244,6 +274,7 @@ class DryRunner:
                 if side == "buy":
                     self.account.apply_buy(self.pair, submit.filled, order.price, self.costs.taker_fee)
                 else:
+                    self._record_close(self.pair, submit.filled, order.price)
                     self.account.apply_sell(self.pair, submit.filled, order.price, self.costs.taker_fee)
                 self._record_equity()  # reflect the manual fill on the UI equity curve
             return {"placed": True, "filled": submit.filled, "reasons": []}

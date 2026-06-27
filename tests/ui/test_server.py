@@ -176,6 +176,19 @@ def test_orderbook_api_uses_query_pair():
     assert handle_request("GET", "/api/orderbook?pair=X", None, _ctx()).body == {}
 
 
+def test_demo_dashboard_has_performance_trades_health():
+    from src.ui.server import build_demo_context
+    d = build_demo_context().dashboard()
+    assert d["performance"]["trade_count"] == 2 and d["performance"]["wins"] == 1
+    assert len(d["trades"]) == 2 and d["health"]["running"] is True
+
+
+def test_dashboard_page_has_new_panels():
+    r = handle_request("GET", "/", None, _ctx())
+    for marker in ("id=\"perf\"", "id=\"trades\"", "Closed trades", "Win rate", "ticks "):
+        assert marker in r.body
+
+
 def test_demo_orderbook_provider_has_depth():
     from src.ui.server import build_demo_context
     b = build_demo_context().orderbook("BTC/JPY")

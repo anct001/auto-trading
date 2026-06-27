@@ -125,6 +125,18 @@ def test_manual_place_bad_input_fails_closed(tmp_path):
     assert res["placed"] is False and any("invalid_order" in r for r in res["reasons"])
 
 
+def test_dashboard_includes_performance_trades_health(tmp_path):
+    runner = _runner(tmp_path, [INTENT_HOLD])
+    runner.run_once()  # a tick (health) + establishes the mark
+    ctx = build_live_context(runner)
+    ctx.place({"side": "buy", "qty": 0.001, "price": 10000.0})
+    ctx.place({"side": "sell", "qty": 0.001, "price": 11000.0})  # close a winning round-trip
+    d = ctx.dashboard()
+    assert d["performance"]["trade_count"] == 1 and d["performance"]["wins"] == 1
+    assert len(d["trades"]) == 1 and d["trades"][0]["pnl"] > 0
+    assert d["health"]["running"] is True and d["health"]["tick_count"] >= 1
+
+
 def test_killswitch_is_shared_with_the_loop(tmp_path):
     runner = _runner(tmp_path, [INTENT_HOLD])
     ctx = build_live_context(runner)
