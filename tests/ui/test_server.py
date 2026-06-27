@@ -104,6 +104,33 @@ def test_demo_markets_provider_works():
     assert {"overview", "heatmap"} <= m.keys() and len(m["overview"]) == 3
 
 
+def test_coin_api_uses_query_pair():
+    ctx = _ctx()
+    ctx.coin = lambda pair: {"pair": pair, "candles": [], "overlays": {}, "readouts": {}}
+    r = handle_request("GET", "/api/coin?pair=BTC%2FJPY", None, ctx)
+    assert r.status == 200 and r.body["pair"] == "BTC/JPY"
+
+
+def test_coin_api_empty_when_unconfigured():
+    r = handle_request("GET", "/api/coin?pair=X", None, _ctx())
+    assert r.status == 200 and r.body == {}
+
+
+def test_coin_page_served():
+    r = handle_request("GET", "/coin", None, _ctx())
+    assert r.status == 200 and r.content_type.startswith("text/html")
+    assert "/api/coin" in r.body
+    # only external reference allowed is the SVG namespace (no remote scripts/CDN)
+    assert "http" not in r.body.replace("http://www.w3.org/2000/svg", "")
+
+
+def test_demo_coin_provider_returns_candles():
+    from src.ui.server import build_demo_context
+    d = build_demo_context().coin("ETH/JPY")
+    assert d["pair"] == "ETH/JPY" and len(d["candles"]) > 0
+    assert len(d["overlays"]["ema_fast"]) == len(d["candles"])
+
+
 def test_sse_frame_format():
     frame = dashboard_sse_frame({"equity": 1.0})
     assert frame.startswith("data: ") and frame.endswith("\n\n")

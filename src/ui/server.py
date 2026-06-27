@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Callable
+from urllib.parse import parse_qs, urlsplit
 
 from src.risk.killswitch import KillSwitch
 from src.ui.api import engage_kill, killswitch_status, rearm_kill
@@ -31,6 +32,7 @@ class OperatorContext:
     preview: Callable[[dict], dict]        # body -> preview_payload(...)
     killswitch: KillSwitch
     markets: Callable[[], dict] | None = None  # () -> {"overview": [...], "heatmap": [...]}
+    coin: Callable[[str], dict] | None = None  # pair -> coin_detail payload
 
 
 @dataclass(frozen=True)
@@ -42,12 +44,25 @@ class Response:
 
 def handle_request(method: str, path: str, body: dict | None, ctx: OperatorContext) -> Response:
     """Route one request. Pure: no I/O. See module docstring for the §12 contract."""
-    path = path.split("?", 1)[0].rstrip("/") or "/"
+    parts = urlsplit(path)
+    query = parse_qs(parts.query)
+    path = parts.path.rstrip("/") or "/"
 
     if path == "/":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
         return Response(200, index_html(), content_type="text/html; charset=utf-8")
+
+    if path == "/coin":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, coin_detail_html(), content_type="text/html; charset=utf-8")
+
+    if path == "/api/coin":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        pair = (query.get("pair") or [""])[0]
+        return Response(200, ctx.coin(pair) if ctx.coin else {})
 
     if path == "/markets":
         if method != "GET":
@@ -182,6 +197,48 @@ refresh();setInterval(refresh,5000);
 </script></body></html>"""
 
 
+def coin_detail_html() -> str:
+    """Coin-detail page (§12): SVG candlestick + EMA overlays + readouts over /api/coin?pair=."""
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Coin detail</title>
+<style>
+ body{font:14px system-ui,sans-serif;background:#0f1115;color:#d7dbe0;margin:0;padding:16px}
+ h1{font-size:16px;margin:0 0 12px} a{color:#6ea8fe} .lbl{color:#8b93a1;font-size:11px;text-transform:uppercase}
+ #ro span{margin-right:16px} svg{background:#171a21;border:1px solid #232833;border-radius:8px}
+</style></head><body>
+<h1>Coin detail: <span id="pair"></span> <a href="/markets">· markets</a> <a href="/">· dashboard</a></h1>
+<div id="ro" class="lbl"></div>
+<svg id="chart" viewBox="0 0 900 360" width="100%" height="360"></svg>
+<script>
+const params=new URLSearchParams(location.search);const pair=params.get("pair")||"BTC/JPY";
+document.getElementById("pair").textContent=pair;
+const NS="http://www.w3.org/2000/svg";
+function line(pts,color){const p=document.createElementNS(NS,"polyline");p.setAttribute("points",pts);
+ p.setAttribute("fill","none");p.setAttribute("stroke",color);p.setAttribute("stroke-width","1.2");return p;}
+async function draw(){
+ const d=await (await fetch("/api/coin?pair="+encodeURIComponent(pair))).json();
+ const c=d.candles||[];const svg=document.getElementById("chart");svg.innerHTML="";
+ if(!c.length){svg.innerHTML='<text x=20 y=30 fill="#8b93a1">no data</text>';return;}
+ const W=900,H=360,pad=30;const lo=Math.min(...c.map(x=>x.l)),hi=Math.max(...c.map(x=>x.h));
+ const x=i=>pad+i*(W-2*pad)/(c.length-1||1);const y=v=>H-pad-(v-lo)/((hi-lo)||1)*(H-2*pad);
+ const cw=Math.max(1,(W-2*pad)/c.length*0.6);
+ c.forEach((k,i)=>{const up=k.c>=k.o;const col=up?"#46d17f":"#f06a6a";
+  const wick=document.createElementNS(NS,"line");wick.setAttribute("x1",x(i));wick.setAttribute("x2",x(i));
+  wick.setAttribute("y1",y(k.h));wick.setAttribute("y2",y(k.l));wick.setAttribute("stroke",col);svg.appendChild(wick);
+  const r=document.createElementNS(NS,"rect");r.setAttribute("x",x(i)-cw/2);r.setAttribute("width",cw);
+  r.setAttribute("y",y(Math.max(k.o,k.c)));r.setAttribute("height",Math.max(1,Math.abs(y(k.o)-y(k.c))));
+  r.setAttribute("fill",col);svg.appendChild(r);});
+ const ef=d.overlays.ema_fast,es=d.overlays.ema_slow;
+ const mk=arr=>arr.map((v,i)=>v==null?null:x(i)+","+y(v)).filter(Boolean).join(" ");
+ svg.appendChild(line(mk(ef),"#e6a23c"));svg.appendChild(line(mk(es),"#6ea8fe"));
+ const r=d.readouts||{};document.getElementById("ro").innerHTML=
+  `<span>close ${r.close?.toFixed?.(2)}</span><span>EMA fast(orange)/slow(blue)</span>`+
+  `<span>ATR% ${r.atr_pct?.toFixed?.(3)}</span><span>trend ${r.ema_fast_above_slow?'▲':'▽'}</span>`;
+}
+draw();setInterval(draw,5000);
+</script></body></html>"""
+
+
 def serve(ctx: OperatorContext, *, host: str = "127.0.0.1", port: int = 8787) -> None:
     """Thin stdlib HTTP adapter around handle_request (not unit-tested — sockets).
 
@@ -246,23 +303,29 @@ def build_demo_context() -> OperatorContext:
         return engine.RiskContext(prices={pair: price}, exchange_state=dict(good),
                                   killswitch=ks, market=market)
 
-    def _markets():
+    def _universe():
         import pandas as pd
-
-        from src.ui.markets import build_markets_overview, heatmap_tiles
         t0 = pd.Timestamp("2026-06-01T00:00:00Z")
 
         def frame(step, vol):
             rows, p = [], 1_000_000.0
-            for i in range(40):
+            for i in range(60):
                 p *= (1.0 + step)
                 rows.append([t0 + pd.Timedelta(hours=i), p, p * 1.002, p * 0.998, p, vol])
             return pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        return {"BTC/JPY": frame(0.004, 12.0), "ETH/JPY": frame(-0.003, 30.0),
+                "XRP/JPY": frame(0.001, 8.0)}
 
-        universe = {"BTC/JPY": frame(0.004, 12.0), "ETH/JPY": frame(-0.003, 30.0),
-                    "XRP/JPY": frame(0.001, 8.0)}
-        overview = build_markets_overview(universe, lookback=24)
+    def _markets():
+        from src.ui.markets import build_markets_overview, heatmap_tiles
+        overview = build_markets_overview(_universe(), lookback=24)
         return {"overview": overview, "heatmap": heatmap_tiles(overview)}
+
+    def _coin(p: str) -> dict:
+        from src.ui.coin_detail import build_coin_detail
+        uni = _universe()
+        name = p if p in uni else next(iter(uni))
+        return build_coin_detail(name, uni[name])
 
     return OperatorContext(
         dashboard=lambda: dashboard_payload(state=state, cfg=cfg, prices={pair: price}, killswitch=ks),
@@ -272,6 +335,7 @@ def build_demo_context() -> OperatorContext:
             state=state, cfg=cfg, ctx=_ctx_obj()),
         killswitch=ks,
         markets=_markets,
+        coin=_coin,
     )
 
 
