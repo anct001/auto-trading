@@ -150,6 +150,11 @@ class DryRunner:
         return {"running": True, "tick_count": self._tick_count, "last_tick_at": self._last_tick_at,
                 "pair": self.pair, "timeframe": self.timeframe}
 
+    def current_frame(self):
+        """The latest candle window (pre-warmed rolling buffer), for the agent-view overlay."""
+        with self._lock:
+            return None if self._buffer is None else self._buffer.copy()
+
     def _record_equity(self) -> None:
         """Append the current marked paper equity (caller must hold self._lock)."""
         self._equity_history.append({

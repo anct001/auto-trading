@@ -137,6 +137,20 @@ def test_dashboard_includes_performance_trades_health(tmp_path):
     assert d["health"]["running"] is True and d["health"]["tick_count"] >= 1
 
 
+def test_agentview_reflects_live_strategy_state(tmp_path):
+    runner = _runner(tmp_path, [INTENT_HOLD])
+    runner.run_once()  # populate the rolling buffer (current_frame)
+    av = build_live_context(runner).agentview(PAIR)
+    assert av["traded"] is True and av["ready"] is True
+    assert av["signal"] in ("hold", "enter_long", "exit")
+    assert "acting" in av and "regime_enabled" in av and "sentiment_haircut" in av
+
+
+def test_agentview_non_traded_pair(tmp_path):
+    runner = _runner(tmp_path, [INTENT_HOLD])
+    assert build_live_context(runner).agentview("ETH/USDT")["traded"] is False
+
+
 def test_killswitch_is_shared_with_the_loop(tmp_path):
     runner = _runner(tmp_path, [INTENT_HOLD])
     ctx = build_live_context(runner)

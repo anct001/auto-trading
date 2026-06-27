@@ -176,6 +176,33 @@ def test_orderbook_api_uses_query_pair():
     assert handle_request("GET", "/api/orderbook?pair=X", None, _ctx()).body == {}
 
 
+def test_agentview_api_uses_query_pair():
+    ctx = _ctx()
+    ctx.agentview = lambda pair: {"pair": pair, "traded": True, "signal": "hold"}
+    r = handle_request("GET", "/api/agentview?pair=BTC%2FJPY", None, ctx)
+    assert r.status == 200 and r.body["pair"] == "BTC/JPY"
+    assert handle_request("GET", "/api/agentview?pair=X", None, _ctx()).body == {}
+
+
+def test_demo_agentview_provider():
+    from src.ui.server import build_demo_context
+    ctx = build_demo_context()
+    av = ctx.agentview("BTC/JPY")
+    assert av["traded"] is True and "signal" in av and "blocked_by" in av
+    assert ctx.agentview("ZZZ/JPY")["traded"] is False
+
+
+def test_coin_page_has_agentview_panel():
+    r = handle_request("GET", "/coin", None, _ctx())
+    assert "/api/agentview" in r.body and "Agent view" in r.body
+
+
+def test_dashboard_page_has_sse_flatten_theme():
+    r = handle_request("GET", "/", None, _ctx())
+    for marker in ("EventSource", "/api/stream", "flatten(", "toggleTheme"):
+        assert marker in r.body
+
+
 def test_demo_dashboard_has_performance_trades_health():
     from src.ui.server import build_demo_context
     d = build_demo_context().dashboard()

@@ -60,6 +60,25 @@ def build_live_context(runner) -> OperatorContext:
         from src.ui.orders_panel import build_order_trade_panel
         return build_order_trade_panel(runner.loop.events.read_all())
 
+    def _agentview(p: str) -> dict:
+        from datetime import datetime, timezone
+
+        from src.risk import engine
+        from src.ui.agent_view import build_agent_view
+        if p != runner.pair:
+            return {"pair": p, "traded": False}
+        df = runner.current_frame()
+        if df is None or len(df) == 0:
+            return {"pair": p, "traded": True, "ready": False}
+        rc = engine.RiskContext(prices=runner.marks(), exchange_state=dict(_GOOD_EXCHANGE),
+                                killswitch=runner.killswitch, market=runner.loop.market)
+        av = build_agent_view(pair=runner.pair, df=df, strategy=runner.loop.strategy,
+                              state=runner.snapshot_state(), cfg=runner.loop.cfg, ctx=rc,
+                              now=datetime.now(timezone.utc))
+        av["traded"] = True
+        av["ready"] = True
+        return av
+
     def _orderbook(p: str) -> dict:
         # read-only depth from the (view) data feed; fail-soft so the UI never breaks on a feed hiccup
         from src.ui.orderbook import build_orderbook_view
@@ -81,4 +100,4 @@ def build_live_context(runner) -> OperatorContext:
         )
 
     return OperatorContext(dashboard=_dashboard, preview=_preview, killswitch=runner.killswitch,
-                           orders=_orders, place=_place, orderbook=_orderbook)
+                           orders=_orders, place=_place, orderbook=_orderbook, agentview=_agentview)

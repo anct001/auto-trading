@@ -36,6 +36,7 @@ class OperatorContext:
     orders: Callable[[], dict] | None = None   # () -> {"attempts", "submitted", "fills"}
     place: Callable[[dict], dict] | None = None  # body -> place a manual order (Inv 9); None = disabled
     orderbook: Callable[[str], dict] | None = None  # pair -> order-book depth view
+    agentview: Callable[[str], dict] | None = None  # pair -> agent-view overlay (signal/regime/sentiment)
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,12 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
             return Response(405, {"error": "read-only endpoint"})
         pair = (query.get("pair") or [""])[0]
         return Response(200, ctx.orderbook(pair) if ctx.orderbook else {})
+
+    if path == "/api/agentview":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        pair = (query.get("pair") or [""])[0]
+        return Response(200, ctx.agentview(pair) if ctx.agentview else {})
 
     if path == "/orders":
         if method != "GET":
@@ -160,18 +167,24 @@ def index_html() -> str:
  .bar{height:6px;background:#232833;border-radius:3px;margin-top:8px;overflow:hidden}
  .barfill{height:100%;border-radius:3px;transition:width .4s}
  svg#eq{background:#171a21;border:1px solid #232833;border-radius:8px;width:100%;height:130px}
+ body.light{background:#f5f6f8;color:#1c2230}
+ body.light .card,body.light svg#eq{background:#fff;border-color:#dfe3ea}
+ body.light .lbl{color:#6b7280} body.light .muted{color:#9aa3b2}
+ body.light th,body.light td{border-color:#e5e8ee} body.light .bar{background:#e5e8ee}
+ body.light button{background:#eceef2;color:#1c2230;border-color:#cdd3dd}
 </style></head><body>
 <h1>Operator dashboard <a href="/markets">· markets</a> <a href="/orders">· orders</a> <span id="ks" class="muted"></span></h1>
 <div class="grid" id="cards"></div>
 <div class="card" style="min-width:100%"><div class="lbl">Equity curve</div><svg id="eq" viewBox="0 0 900 130" preserveAspectRatio="none"></svg></div>
 <div class="grid" id="perf"></div>
 <div class="card" style="min-width:100%"><div class="lbl">Open positions</div><table id="pos"><thead>
-<tr><th>Pair</th><th>Qty</th><th>Value</th><th>Unrealized</th><th>Exposure %</th></tr></thead><tbody></tbody></table></div>
+<tr><th>Pair</th><th>Qty</th><th>Value</th><th>Unrealized</th><th>Exposure %</th><th></th></tr></thead><tbody></tbody></table></div>
 <div class="card" style="min-width:100%"><div class="lbl">Closed trades</div><table id="trades"><thead>
 <tr><th>Exit time</th><th>Pair</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Return %</th><th>P&L</th></tr></thead><tbody></tbody></table></div>
 <div class="card" style="min-width:100%"><div class="lbl">Decision log</div><div id="log"></div></div>
 <div style="margin-top:12px"><button class="kill" onclick="engage()">Engage kill-switch</button>
-<button onclick="rearm()">Re-arm</button> <span id="msg" class="muted"></span></div>
+<button onclick="rearm()">Re-arm</button> <button onclick="toggleTheme()">Theme</button>
+<span id="msg" class="muted"></span></div>
 <script>
 const COL={ok:"#46d17f",warn:"#e6a23c",bad:"#f06a6a"};
 const fmt=(n)=>typeof n==="number"?n.toLocaleString(undefined,{maximumFractionDigits:4}):n;
@@ -188,8 +201,7 @@ function drawEquity(curve){
  const pl=document.createElementNS("http://www.w3.org/2000/svg","polyline");
  pl.setAttribute("points",pts);pl.setAttribute("fill","none");pl.setAttribute("stroke",col);pl.setAttribute("stroke-width","1.5");
  svg.appendChild(pl);}
-async function refresh(){
- try{const d=await (await fetch("/api/dashboard")).json();
+function render(d){
   const dpl=cls(d.day_return_pct,d.daily_soft_pct,d.daily_hard_pct);
   const ddc=cls(d.drawdown_pct,d.killswitch_pct/2,d.killswitch_pct);
   const grc=d.gross_exposure_pct>d.gross_cap_pct?"bad":(d.gross_exposure_pct>d.gross_cap_pct*0.8?"warn":"ok");
@@ -217,16 +229,25 @@ async function refresh(){
   document.querySelector("#trades tbody").innerHTML=(d.trades||[]).map(t=>
    `<tr><td>${(t.exit_time||"").slice(0,19).replace("T"," ")}</td><td>${t.pair}</td><td>${fmt(t.qty)}</td><td>${fmt(t.entry_price)}</td><td>${fmt(t.exit_price)}</td><td class="${t.return>=0?'ok':'bad'}">${(t.return*100).toFixed(3)}</td><td class="${t.pnl>=0?'ok':'bad'}">${fmt(t.pnl)}</td></tr>`).join("")||"<tr><td class=muted>none yet</td></tr>";
   document.querySelector("#pos tbody").innerHTML=(d.positions||[]).map(p=>
-   `<tr><td>${p.pair}</td><td>${fmt(p.qty)}</td><td>${fmt(p.value)}</td><td class="${p.unrealized_pnl>=0?'ok':'bad'}">${fmt(p.unrealized_pnl)}</td><td>${fmt(p.exposure_pct)}</td></tr>`).join("")||"<tr><td class=muted>flat</td></tr>";
+   `<tr><td>${p.pair}</td><td>${fmt(p.qty)}</td><td>${fmt(p.value)}</td><td class="${p.unrealized_pnl>=0?'ok':'bad'}">${fmt(p.unrealized_pnl)}</td><td>${fmt(p.exposure_pct)}</td><td><button onclick="flatten('${p.pair}',${p.qty},${p.price})">Flatten</button></td></tr>`).join("")||"<tr><td class=muted>flat</td></tr>";
   document.getElementById("log").innerHTML=(d.decision_log||[]).map(e=>
    `<div>${e.timestamp} <b>${e.type}</b> ${e.pair} ${e.detail}</div>`).join("")||"<div class=muted>no events</div>";
- }catch(e){document.getElementById("msg").textContent="fetch error: "+e;}
 }
-async function engage(){await fetch("/api/killswitch/engage",{method:"POST"});refresh();}
+async function poll(){try{render(await (await fetch("/api/dashboard")).json());}
+ catch(e){document.getElementById("msg").textContent="fetch error: "+e;}}
+async function flatten(pair,qty,price){if(!confirm("Flatten "+pair+" ("+qty+")?"))return;
+ const r=await fetch("/api/order",{method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({side:"sell",pair:pair,qty:qty,price:price})});const j=await r.json();
+ document.getElementById("msg").textContent=j.placed?("flattened "+pair):("flatten failed: "+((j.reasons||[]).join("; ")||j.error||""));poll();}
+function toggleTheme(){document.body.classList.toggle("light");
+ localStorage.setItem("uitheme",document.body.classList.contains("light")?"light":"dark");}
+async function engage(){await fetch("/api/killswitch/engage",{method:"POST"});poll();}
 async function rearm(){const op=prompt("Operator identity (human re-enable):");if(!op)return;
  const r=await fetch("/api/killswitch/rearm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({operator:op})});
- document.getElementById("msg").textContent=r.ok?"re-armed":"re-arm rejected";refresh();}
-refresh();setInterval(refresh,5000);
+ document.getElementById("msg").textContent=r.ok?"re-armed":"re-arm rejected";poll();}
+if(localStorage.getItem("uitheme")==="light")document.body.classList.add("light");
+poll();setInterval(poll,5000);  // poll fallback (cheap)
+try{const es=new EventSource("/api/stream");es.onmessage=e=>{try{render(JSON.parse(e.data));}catch(_){}};}catch(_){}
 </script></body></html>"""
 
 
@@ -270,6 +291,7 @@ def coin_detail_html() -> str:
  #ro span{margin-right:16px} svg{background:#171a21;border:1px solid #232833;border-radius:8px}
 </style></head><body>
 <h1>Coin detail: <span id="pair"></span> <a href="/markets">· markets</a> <a href="/">· dashboard</a></h1>
+<div id="agent" style="margin:6px 0 10px;padding:8px 12px;background:#171a21;border:1px solid #232833;border-radius:8px"></div>
 <div id="ro" class="lbl"></div>
 <svg id="chart" viewBox="0 0 900 360" width="100%" height="360"></svg>
 <h2 class="lbl" style="margin-top:14px">Order book <span id="spread"></span></h2>
@@ -278,6 +300,18 @@ def coin_detail_html() -> str:
 const params=new URLSearchParams(location.search);const pair=params.get("pair")||"BTC/JPY";
 document.getElementById("pair").textContent=pair;
 const fmtn=(n)=>n==null?"—":n.toLocaleString(undefined,{maximumFractionDigits:6});
+async function drawAgent(){
+ try{const a=await (await fetch("/api/agentview?pair="+encodeURIComponent(pair))).json();
+  const el=document.getElementById("agent");
+  if(a.traded===false){el.innerHTML='<span class="lbl">Agent: not in the traded set (view-only)</span>';return;}
+  if(a.ready===false||a.signal===undefined){el.innerHTML='<span class="lbl">Agent: warming up…</span>';return;}
+  const act=a.acting?'<b style="color:#46d17f">ACTING (would enter)</b>':'<b style="color:#8b93a1">not acting</b>';
+  const why=(a.blocked_by&&a.blocked_by.length)?' · blocked: '+a.blocked_by.join(", "):'';
+  const pos=a.position&&a.position.qty?` · pos ${a.position.qty} (uPnL ${(a.position.unrealized_pnl||0).toFixed(2)})`:' · flat';
+  el.innerHTML=`<span class="lbl">Agent view</span> &nbsp; signal <b>${a.signal}</b> · ${act}${why}`+
+   ` · regime ${a.regime_enabled?'on':'OFF'} · sentiment×${(a.sentiment_haircut??1).toFixed(2)}`+
+   ` · ${a.killswitch_engaged?'<b style="color:#f06a6a">KILLED</b>':'armed'}${pos}`;
+ }catch(e){}}
 async function drawBook(){
  try{const b=await (await fetch("/api/orderbook?pair="+encodeURIComponent(pair))).json();
   document.getElementById("spread").textContent=b.mid==null?"":`· mid ${fmtn(b.mid)} · spread ${fmtn(b.spread_pct)}%`;
@@ -308,7 +342,7 @@ async function draw(){
   `<span>close ${r.close?.toFixed?.(2)}</span><span>EMA fast(orange)/slow(blue)</span>`+
   `<span>ATR% ${r.atr_pct?.toFixed?.(3)}</span><span>trend ${r.ema_fast_above_slow?'▲':'▽'}</span>`;
 }
-draw();setInterval(draw,5000);drawBook();setInterval(drawBook,5000);
+draw();setInterval(draw,5000);drawBook();setInterval(drawBook,5000);drawAgent();setInterval(drawAgent,5000);
 </script></body></html>"""
 
 
@@ -370,6 +404,7 @@ def serve(ctx: OperatorContext, *, host: str = "127.0.0.1", port: int = 8787) ->
     Read-only operator surface on localhost. Bodies are JSON. The kill-switch and preview are the
     only writes (§12). Intended for the solo operator's own machine, not public exposure.
     """
+    import time as _t
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     class _Handler(BaseHTTPRequestHandler):
@@ -389,7 +424,25 @@ def serve(ctx: OperatorContext, *, host: str = "127.0.0.1", port: int = 8787) ->
             self.end_headers()
             self.wfile.write(out)
 
+        def _stream_dashboard(self) -> None:
+            """Server-Sent-Events: push a dashboard snapshot every ~2s until the client leaves."""
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            try:
+                while True:
+                    frame = dashboard_sse_frame(ctx.dashboard()).encode("utf-8")
+                    self.wfile.write(frame)
+                    self.wfile.flush()
+                    _t.sleep(2.0)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return  # client disconnected — end the stream quietly
+
         def do_GET(self) -> None:   # noqa: N802 (stdlib API)
+            if self.path.split("?", 1)[0].rstrip("/") == "/api/stream":
+                self._stream_dashboard()
+                return
             self._dispatch("GET")
 
         def do_POST(self) -> None:  # noqa: N802
@@ -452,6 +505,15 @@ def build_demo_context() -> OperatorContext:
         name = p if p in uni else next(iter(uni))
         return build_coin_detail(name, uni[name])
 
+    def _agentview(p: str) -> dict:
+        if p != pair:
+            return {"pair": p, "traded": False}
+        return {"pair": pair, "traded": True, "ready": True, "price": price, "signal": "hold",
+                "acting": False, "blocked_by": ["intent:hold"], "regime_enabled": True,
+                "target_regime": "trend", "sentiment_haircut": 1.0, "sentiment_fresh": None,
+                "killswitch_engaged": False,
+                "position": {"qty": 0.02, "entry_price": 9.5e6, "unrealized_pnl": 10000.0}}
+
     def _orderbook(p: str) -> dict:
         from src.ui.orderbook import build_orderbook_view
         mid = price
@@ -499,6 +561,7 @@ def build_demo_context() -> OperatorContext:
         coin=_coin,
         orders=_orders,
         orderbook=_orderbook,
+        agentview=_agentview,
     )
 
 
