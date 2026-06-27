@@ -34,13 +34,21 @@ PAIR = "BTC/USDT"
 TIMEFRAME = "1h"
 
 
-def fetch_real_ohlcv(limit=720):
+def fetch_real_ohlcv(history_days=900, page_limit=720):
+    """Page through ~history_days of 1h candles so the sample can clear the ≥100-trade gate.
+
+    A single fetch_ohlcv is capped (~720 rows on Kraken ≈ 30 days of 1h), nowhere near enough.
+    feed.fetch_ohlcv_history loops with `since` to stitch a multi-regime window (§13 fix).
+    """
     ex = getattr(ccxt, EXCHANGE_ID)({"enableRateLimit": True})
     proxy = os.environ.get("HTTPS_PROXY")
     if proxy:
         ex.https_proxy = proxy
-    raw = ex.fetch_ohlcv(PAIR, timeframe=TIMEFRAME, limit=limit)
-    return feed.to_closed_frame(raw, TIMEFRAME)
+    now_ms = ex.milliseconds()
+    since_ms = now_ms - history_days * 86_400_000
+    return feed.fetch_ohlcv_history(
+        ex, PAIR, TIMEFRAME, since_ms=since_ms, page_limit=page_limit, now_ms=now_ms
+    )
 
 
 def main():

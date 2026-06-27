@@ -98,3 +98,59 @@ def test_fetch_closed_ohlcv_calls_exchange_and_filters():
     df = feed.fetch_closed_ohlcv(ex, "BTC/USDT", "1h", limit=500, now_ms=2 * HOUR_MS + 1)
     assert ex.calls == [("BTC/USDT", "1h", None, 500)]
     assert len(df) == 2  # last candle still forming, dropped
+
+
+# ---- paginated history fetch (§13 feed pagination gap) ---------------------------------------
+
+class PagingExchange:
+    """Fake ccxt exchange that honors ``since``/``limit`` to page through a fixed history."""
+
+    def __init__(self, candles):
+        self._candles = list(candles)  # full ascending [ts, o,h,l,c,v]
+        self.calls = []
+
+    def fetch_ohlcv(self, symbol, timeframe=None, since=None, limit=None):
+        self.calls.append((symbol, timeframe, since, limit))
+        start = 0 if since is None else since
+        page = [c for c in self._candles if c[0] >= start]
+        return page[:limit] if limit is not None else page
+
+
+def test_history_pages_across_calls_and_stitches_full_range():
+    candles = [_candle(i * HOUR_MS, close=100 + i) for i in range(5)]  # 0h..4h
+    ex = PagingExchange(candles)
+    df = feed.fetch_ohlcv_history(
+        ex, "BTC/USDT", "1h", since_ms=0, page_limit=2, now_ms=10 * HOUR_MS
+    )
+    assert len(df) == 5  # all closed, stitched from 3 pages
+    assert len(ex.calls) >= 3  # had to paginate
+    assert df["timestamp"].is_monotonic_increasing and df["timestamp"].is_unique
+    assert df["close"].tolist() == [100, 101, 102, 103, 104]
+
+
+def test_history_drops_still_forming_candle_and_respects_now():
+    candles = [_candle(i * HOUR_MS) for i in range(4)]  # 0h..3h; 3h closes at 4h
+    ex = PagingExchange(candles)
+    df = feed.fetch_ohlcv_history(
+        ex, "BTC/USDT", "1h", since_ms=0, page_limit=10, now_ms=3 * HOUR_MS + 1
+    )
+    assert len(df) == 3  # the 3h candle is still forming → dropped
+
+
+def test_history_dedupes_and_terminates_when_exchange_ignores_since():
+    # An exchange that returns the same full window every call must not loop forever
+    # nor duplicate rows.
+    candles = [_candle(i * HOUR_MS) for i in range(5)]
+    ex = FakeExchange(candles)  # ignores `since`, always returns the full list
+    df = feed.fetch_ohlcv_history(
+        ex, "BTC/USDT", "1h", since_ms=0, page_limit=10, now_ms=10 * HOUR_MS
+    )
+    assert len(df) == 5  # deduped, not 5*n
+    assert df["timestamp"].is_unique
+
+
+def test_history_empty_first_page_returns_empty_typed_frame():
+    ex = PagingExchange([])
+    df = feed.fetch_ohlcv_history(ex, "BTC/USDT", "1h", since_ms=0, now_ms=10 * HOUR_MS)
+    assert df.empty
+    assert list(df.columns) == ["timestamp", "open", "high", "low", "close", "volume"]

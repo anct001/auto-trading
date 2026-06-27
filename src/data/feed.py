@@ -98,3 +98,50 @@ def fetch_closed_ohlcv(
     """
     raw = exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=None, limit=limit)
     return to_closed_frame(raw, timeframe, now_ms=now_ms)
+
+
+def fetch_ohlcv_history(
+    exchange: SupportsFetchOHLCV,
+    symbol: str,
+    timeframe: str,
+    *,
+    since_ms: int,
+    until_ms: int | None = None,
+    page_limit: int = 1000,
+    now_ms: int | None = None,
+    max_pages: int = 10_000,
+) -> pd.DataFrame:
+    """Page through history from ``since_ms`` and return closed candles only (§13 fix).
+
+    A single ``fetch_ohlcv`` call is capped (≈500–1000 rows on most venues), far short of the
+    ≥100-trade multi-regime sample the P0 close needs. This loops, advancing ``since`` past the
+    last candle of each page, accumulating until it reaches ``until_ms`` (default: now). Rows are
+    de-duplicated by timestamp, so overlapping pages — or an exchange that ignores ``since`` — are
+    handled, and a page that makes no forward progress stops the loop instead of spinning forever.
+
+    Returns the same typed, closed-candles-only frame as :func:`to_closed_frame`.
+    """
+    duration_ms = timeframe_to_ms(timeframe)
+    cutoff = _now_ms() if now_ms is None else int(now_ms)
+    end = cutoff if until_ms is None else min(int(until_ms), cutoff)
+
+    collected: dict[int, list[Any]] = {}
+    cursor = int(since_ms)
+    last_seen: int | None = None
+    for _ in range(max_pages):
+        if cursor >= end:
+            break
+        page = exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=cursor, limit=page_limit)
+        if not page:
+            break
+        for row in page:
+            collected[int(row[0])] = row
+        page_last = int(page[-1][0])
+        # No forward progress (exchange ignored `since` or returned only stale rows) → stop.
+        if last_seen is not None and page_last <= last_seen:
+            break
+        last_seen = page_last
+        cursor = page_last + duration_ms
+
+    ordered = [collected[ts] for ts in sorted(collected)]
+    return to_closed_frame(ordered, timeframe, now_ms=cutoff)
