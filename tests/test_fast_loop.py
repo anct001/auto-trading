@@ -250,6 +250,56 @@ def test_sentiment_never_triggers_an_entry_on_hold(tmp_path):
     assert ex.created == []
 
 
+class RegimeStrategy(FakeStrategy):
+    def __init__(self, last_intent, target_regime):
+        super().__init__(last_intent)
+        self.target_regime = target_regime
+
+
+def _regime_state(regime):
+    from src.strategy.regime import RegimeState
+    return RegimeState(schema_version=1, generated_at=NOW, ttl_seconds=600, regimes={PAIR: regime})
+
+
+def _loop_regime(exchange, events, strategy, provider):
+    markets = {PAIR: _MARKET}
+    return FastLoop(
+        broker=Broker(exchange, markets), stops=StopManager(exchange, markets), events=events,
+        strategy=strategy, cfg=_cfg(), market=_MARKET, pair=PAIR, atr_period=3, atr_stop_mult=2.0,
+        regime_provider=provider, now_fn=lambda: NOW,
+    )
+
+
+def test_regime_mismatch_disables_entry(tmp_path):
+    from src.fast_loop import REGIME_DISABLED
+    ex = FakeExchange()
+    events = EventLog(tmp_path / "e.jsonl")
+    res = _loop_regime(ex, events, RegimeStrategy(INTENT_ENTER_LONG, "trend"),
+                       lambda: _regime_state("range")).tick(
+        _frame(), _state(), _ctx(), client_order_id="t1")
+    assert res.action == "hold" and res.reason == "regime_disabled"
+    assert ex.created == []  # no entry placed
+    assert REGIME_DISABLED in [e.type for e in events.read_all()]
+
+
+def test_regime_match_allows_entry(tmp_path):
+    ex = FakeExchange()
+    res = _loop_regime(ex, EventLog(tmp_path / "e.jsonl"), RegimeStrategy(INTENT_ENTER_LONG, "trend"),
+                       lambda: _regime_state("trend")).tick(
+        _frame(), _state(), _ctx(), client_order_id="t1")
+    assert res.action == "enter"
+
+
+def test_regime_never_blocks_an_exit(tmp_path):
+    # even with a mismatched regime, an exit must still flatten the position
+    ex = FakeExchange()
+    state = _state(positions={PAIR: Position(PAIR, 0.1, 10000.0)})
+    res = _loop_regime(ex, EventLog(tmp_path / "e.jsonl"), RegimeStrategy(INTENT_EXIT, "trend"),
+                       lambda: _regime_state("range")).tick(
+        _frame(), state, _ctx(), client_order_id="x1")
+    assert res.action == "exit"
+
+
 def test_provider_exception_does_not_break_the_trade(tmp_path):
     def boom():
         raise RuntimeError("ollama down")

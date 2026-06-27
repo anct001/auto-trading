@@ -39,8 +39,10 @@ from src.llm.sentiment import SentimentState, size_haircut
 from src.risk.sizing import MarketConstraints, compute_size
 from src.risk.types import Order, PortfolioState, RiskDecision
 from src.strategy.base import INTENT_ENTER_LONG, INTENT_EXIT
+from src.strategy.regime import RegimeState, is_strategy_enabled
 
 SENTIMENT_HAIRCUT = "SentimentHaircut"
+REGIME_DISABLED = "RegimeDisabled"
 
 _HELD_EPS = 1e-12  # treat a dust-sized residual position as flat (float-safe)
 
@@ -69,6 +71,7 @@ class FastLoop:
         atr_period: int = 14,
         atr_stop_mult: float = 2.0,
         sentiment_provider: Callable[[], SentimentState | None] | None = None,
+        regime_provider: Callable[[], RegimeState | None] | None = None,
         now_fn: Callable[[], datetime] | None = None,
     ):
         self.broker = broker
@@ -84,6 +87,10 @@ class FastLoop:
         # it NEVER calls the LLM synchronously, so the fast loop never blocks on it (Inv. 2).
         # Absent provider, or cfg.sentiment_floor == 1.0, means the feature is a strict no-op.
         self.sentiment_provider = sentiment_provider
+        # Optional deterministic regime gate (§5): disables ENTRIES for a strategy whose
+        # target_regime doesn't match the (slow-loop-classified) live regime. Never blocks an
+        # exit. Absent provider / "any" regime → no-op. Reads a local file, never the LLM.
+        self.regime_provider = regime_provider
         self.now_fn = now_fn or (lambda: datetime.now(timezone.utc))
 
     def tick(
@@ -111,10 +118,26 @@ class FastLoop:
         held = pos.qty if pos else 0.0
 
         if intent == INTENT_ENTER_LONG and held <= _HELD_EPS:
+            if not self._regime_allows_entry():
+                self.events.append(REGIME_DISABLED, {"pair": self.pair,
+                                                     "target_regime": self.strategy.target_regime})
+                return TickResult("hold", intent, reason="regime_disabled")
             return self._enter(state, ctx, price, atr_now, client_order_id)
         if intent == INTENT_EXIT and held > _HELD_EPS:
             return self._exit(state, ctx, price, held, client_order_id)
         return TickResult("hold", intent)
+
+    def _regime_allows_entry(self) -> bool:
+        """Deterministic §5 regime gate. Disables entries when the live regime contradicts the
+        strategy's target_regime. Fail-to-enabled: no provider / error / unknown → allowed (Inv 2)."""
+        if self.regime_provider is None:
+            return True
+        try:
+            state = self.regime_provider()
+        except Exception:
+            return True
+        target = getattr(self.strategy, "target_regime", "any")
+        return is_strategy_enabled(state, self.pair, target, now=self.now_fn())
 
     def _sentiment_multiplier(self) -> float:
         """Resolve the bounded slow-loop size haircut for this entry (§3, P1).
