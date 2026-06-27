@@ -6,8 +6,8 @@
 
 ## Where things stand
 
-- **Branch:** `claude/new-session-vcxyyp` · **Phase:** P0 (not closed) · **Tests:** 254 passing,
-  `ruff` clean. Everything is committed (local; push when a remote is configured).
+- **Branch:** `claude/new-session-vcxyyp` · **Phase:** P0 (harness proven; not formally closed) ·
+  **Tests:** 261 passing, `ruff` clean. Committed (local; push when a remote is configured).
 - **What this is:** a solo-operator, paper-first, phase-gated crypto trading system. Deterministic
   engine makes every trade; a local LLM (later) is an out-of-loop researcher only.
 
@@ -69,14 +69,18 @@ python -m src.dry_run --data-exchange kraken --pair BTC/USDT --timeframe 1h --it
 
 ## Recommended next steps (in order)
 
-1. **Close P0 — now mostly operational.** The code path is proven: `first_real_backtest.py`
-   pulls ~21.6k real candles (Bybit) → quality gate → reproducible **366-trade** backtest →
-   walk-forward (sample gate TRUE). Remaining is the operator's actual venue: **(a)** verify
-   BTC/USDT is listed on **Binance Japan** (else BTC/JPY) + KYC/ToS allow API spot bots (§11);
-   **(b)** re-run the backtest on that venue's data with the **real fee tier** (§8.3); **(c)** a
-   **≥30-day forward dry-run** (`dry_run.py --iterations 0`) and compare its signal metrics to the
-   backtest (§8.9). Note: a *dumb* EMA-cross shows **no edge** on real 2.5y data — P0 closure is
-   about a proven pipeline/sample, not this strategy's P&L.
+1. **Close P0 — only operational steps remain; the whole code path is proven.**
+   `first_real_backtest.py` pulls ~21.6k real candles (Bybit) → quality gate → reproducible
+   **366-trade** backtest → walk-forward (sample gate TRUE); **`dryrun_parity.py` proves §8.9
+   signal parity (8557/8557, rate 1.0000)**. Remaining is the operator's actual venue:
+   **(a) pin the venue** — ccxt has **no Binance Japan entity** (`binance`→Global; JFSA venues in
+   ccxt: bitbank/bitflyer/coincheck/zaif). Decide: Binance-Japan-via-`binance`-with-JP-account,
+   a ccxt JFSA venue (amends ADR 0002), or defer. Verify KYC/ToS for API spot bots (§11).
+   **(b)** re-run the backtest on that venue's data with its **real fee tier** (§8.3).
+   **(c)** run a live **≥30-day forward dry-run** (`dry_run.py --iterations 0`) and then
+   `python scripts/dryrun_parity.py` (or `backtest/parity.py`) against its event log to confirm
+   parity holds in production. A *dumb* EMA-cross shows **no edge** on real 2.5y data — P0 is
+   about a proven pipeline, not this strategy's P&L.
 2. **Then P1 (LLM, optional):** wire `llm/**` sentiment as a **bounded size-haircut, FLOOR=1.0**,
    forward-validated via ablation (§6). Needs Ollama (see `ops/HARDWARE.md`).
 3. **Then P3:** `ui/**` operator dashboard + `strategy/shadow.py`, and reintroduce Freqtrade for

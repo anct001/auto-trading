@@ -266,13 +266,24 @@ wrote HANDOFF — **can reach Binance/Bybit/OKX, no HTTP 451**).
   −0.88) under costs — the harness correctly showing **no edge**; not an edge claim, not the real
   P0 close. Full suite **254 passed**, ruff clean.
 
+### 2026-06-27 (local session, cont.) — venue probe + §8.9 signal-parity tool & proof
+- **ccxt has no Binance Japan entity** (probed 4.5.60): `binance`→Global, plus `binanceus` /
+  futures. JFSA venues in ccxt: bitbank/bitflyer/coincheck/zaif. Recorded in ADR 0002 "Findings";
+  operator must pin a venue before P4. Doesn't block P0 (pipeline venue-agnostic).
+- **§8.9 signal parity (`backtest/parity.py`, +7 tests):** parses a dry-run event log into a
+  per-candle intent series (pairs MarketReceived+SignalGenerated), computes the backtest's
+  full-series intents, diffs on shared candles. Parity = non-empty overlap, zero mismatches.
+- **Replay proof (`scripts/dryrun_parity.py`):** proves §8.9 NOW (no 30-day wait) by reproducing
+  the live rolling-window decision over real history vs. the full-series backtest. Bybit 1y 1h:
+  **8557/8557 candles match (rate=1.0000)** → no train-serve skew. Full suite **261 passed**.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.
-- **Operational (not code):** the real P0 close — real venue (Binance Japan, reachable env) +
-  ≥100-trade multi-regime sample + ≥30-day forward dry-run. Code path is now proven on real
-  multi-regime data (Bybit harness); remaining work is the operator's actual venue + KYC/ToS +
-  the live forward dry-run.
+- **Operational (not code):** the real P0 close — pin venue (ccxt has no Binance Japan; see ADR
+  0002) + real fee tier (§8.3) + a live ≥30-day forward dry-run, then `dryrun_parity` on its
+  event log. The whole code path (data → quality → backtest → walk-forward → signal parity) is
+  now proven on real multi-regime data; only the venue binding + live forward run remain.
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 
