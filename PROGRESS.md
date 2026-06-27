@@ -210,14 +210,26 @@ data. Remaining big gaps below.
 - **core/ is now fully implemented** (config hash-lock + secrets + clock). Remaining stubs:
   `features/cache.py`, `llm/**`, `strategy/shadow.py`, `ui/api.py`.
 
-### What's left (none of it is P0 money-code logic anymore)
-- **The keystone not yet built:** a **fast-loop orchestrator** (§3) composing data → quality →
-  features → strategy → sizing → risk → broker → stops → reconcile → event log into one
-  deterministic tick. All the pieces exist and are tested in isolation; this wires them (and the
-  event log) together. Proposed next.
-- **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`.
-- **Operational (not code):** the real P0 close — real venue + ≥100-trade multi-regime sample +
-  ≥30-day dry-run.
+### 2026-06-27 — keystone: fast-loop orchestrator (§3)
+- `src/fast_loop.py`: `FastLoop.tick(df, state, ctx)` composes ONE closed-candle decision —
+  quality gate → single feature path (ATR) → strategy intent → sizing → **risk gate** → broker →
+  exchange-side protective stop → event log. Every order still passes `engine.validate`
+  (Inv. 3/9); reads slow-loop inputs as optional/non-vetoing (none until P1); deterministic.
+- Integration-tested with the REAL components (engine/sizing/broker/stops/event log), faking only
+  the exchange. **Proof:** `pytest tests/test_fast_loop.py` → 5 passed (enter flow sizes→
+  validates→submits→attaches reduceOnly stop + logs the event chain; halt blocks + logs
+  RiskRejected; hold no-op; infeasible size skipped; exit sells the held position). Full suite:
+  **230 passed**, ruff clean.
+- **Design note observed:** inverse-ATR sizing caps at fractional-Kelly (50%), but the engine's
+  per-asset cap (25%) is tighter — in unrealistically low-vol data the sized order can exceed
+  per-asset and the engine (correctly) rejects it. Safe (sizing proposes, engine disposes); a
+  future tuning could clamp sizing to per-asset to avoid futile rejections.
+
+### What's left
+- **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
+  `features/cache.py`.
+- **Operational (not code):** the real P0 close — real venue (Binance Japan, reachable env) +
+  ≥100-trade multi-regime sample + ≥30-day forward dry-run.
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 

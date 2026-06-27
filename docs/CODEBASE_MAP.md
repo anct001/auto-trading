@@ -25,6 +25,7 @@ autonomous-crypto-trading-agent/
 │   ├── adr/                      # architecture decision records (0001…)
 │   └── phases/                   # P0…P5: per-phase spec + DONE-GATE
 ├── src/
+│   ├── fast_loop.py              # §3 fast (deterministic) loop — composes the whole pipeline/tick
 │   ├── core/                     # config, secrets, clock — used by everything
 │   │   ├── config.py             # declarative config; hash-locked (§15 integrity check)
 │   │   ├── secrets.py            # env/vault loader; never logged (§10)
