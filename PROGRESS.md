@@ -241,6 +241,13 @@ deterministic client id + reconcile (persist deferred to P4). **#12** (exits ski
 intentional for flatten) and **#13** (feed pagination, a feature gap) left as conscious notes.
 Full suite **244 passed**, ruff clean.
 
+### 2026-06-27 — paper dry-run CLI (`src/dry_run.py`)
+`python -m src.dry_run` runs the fast loop on closed candles in PAPER mode: OHLCV from a
+read-only ccxt feed, orders routed to a SIMULATED paper exchange (no real capital ever leaves
+the process), each tick appended to the event log. `PaperAccount` tracks paper equity/positions
+and updates from fills. run_once() is the testable unit (4 tests, fakes, no network); run()/main()
+add the sleep loop + CLI. Smoke-tested live against Kraka data (1 tick → hold). Full suite **248 passed**, ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

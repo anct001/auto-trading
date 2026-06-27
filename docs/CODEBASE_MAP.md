@@ -26,6 +26,7 @@ autonomous-crypto-trading-agent/
 │   └── phases/                   # P0…P5: per-phase spec + DONE-GATE
 ├── src/
 │   ├── fast_loop.py              # §3 fast (deterministic) loop — composes the whole pipeline/tick
+│   ├── dry_run.py                # paper dry-run loop driver + CLI (python -m src.dry_run)
 │   ├── core/                     # config, secrets, clock — used by everything
 │   │   ├── config.py             # declarative config; hash-locked (§15 integrity check)
 │   │   ├── secrets.py            # env/vault loader; never logged (§10)

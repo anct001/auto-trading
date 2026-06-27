@@ -73,6 +73,19 @@ it uses **Kraken** as a provisional source because Binance is geo-blocked from m
 sample-size gate correctly reports the result as not meaningful. This validates the harness, it
 does **not** close P0.
 
+### Run the paper dry-run loop (needs network)
+
+```bash
+python -m src.dry_run --data-exchange kraken --pair BTC/USDT --timeframe 1h --iterations 1
+# --iterations 0 runs forever (polls every --poll-seconds); writes events/dry_run.jsonl
+```
+
+Runs the fast loop on closed candles in **paper** mode: OHLCV comes from a read-only data
+exchange, but every order is routed to a **simulated** paper exchange — **no real capital, no
+real order ever leaves the process**. Each tick is appended to the (git-ignored) event log. This
+validates signal logic and the order path forward; it does **not** validate fills (§2), and one
+tick on flat data just prints `hold`.
+
 ### Secrets / live trading
 
 No keys are needed for tests or the demo. Real keys (trade-only, withdrawals disabled,
@@ -82,8 +95,9 @@ trades real capital** in this repository yet.
 
 ### What does NOT exist yet
 
-A live/dry-run loop runner CLI (the `src/fast_loop.py` orchestrator is a library, driven by
-tests), the LLM slow loop (`llm/**`, P1, needs Ollama), and the operator UI (`ui/**`, P3).
+Live trading on real capital (gated to P4), the LLM slow loop (`llm/**`, P1, needs Ollama), and
+the operator UI (`ui/**`, P3). The paper dry-run loop (`src/dry_run.py`) exists; a real P0/P3
+close still needs the operator's actual venue, more history, and a sustained ≥30-day run.
 
 ## Layout
 
