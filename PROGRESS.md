@@ -366,7 +366,11 @@ ruff clean.
 
 **§12 operator surface is now COMPLETE** (logic + stdlib transport + all read surfaces +
 both writes: kill-switch and the risk-gated manual order; live-wired via `dry_run.py --serve-ui`).
-**Remaining (UI):** only nice-to-have pixels (live order-book depth, richer charts).
+Order-book depth added (`ui/orderbook.py` + `/api/orderbook` + depth panel on `/coin`; demo static
+book, live via the view feed's fetch_order_book). Polish pass: CODEBASE_MAP refreshed, dead
+`ui/market`+`ui/orders` empty subpackages removed, cross-page nav links. Final live smoke: all 4
+pages (/ /markets /coin /orders) 200 + all read APIs ok. Full suite **446**, ruff clean.
+**Remaining (UI):** only richer chart pixels (nice-to-have).
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 

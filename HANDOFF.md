@@ -114,7 +114,7 @@ python scripts/dryrun_parity.py --exchange bitbank --pair BTC/JPY --days 30
    + `ui/markets.py` (`/markets` watchlist+heatmap, `/api/markets`) are DONE. Only coin-detail
    **the entire §12 operator surface is DONE** (dashboard/markets/coin/orders pages + JSON API +
    both writes: kill-switch and the risk-gated manual order, all live-wired via `dry_run.py
-   --serve-ui`). Only nice-to-have pixels remain (order-book depth, richer charts). Fill realism:
+   --serve-ui`; order-book depth on /coin). Only richer chart pixels remain (nice-to-have). Fill realism:
    `backtest/fill_parity.py` quantifies the §2 optimism gap (seam for an actual Freqtrade dry-run
    reference); **(b) the gate
    itself (operational)** — a **≥30-day continuous dry-run** on bitbank BTC/JPY (no crash),
