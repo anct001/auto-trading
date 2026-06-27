@@ -26,7 +26,7 @@
 | `execution/**` broker, stops, reconcile, convergence (E1–E4) | — |
 | `llm/` sentiment (P1, inert at FLOOR=1.0) + orchestrator + Ollama backend + **journal + hypothesis_gen (P2)** | — |
 | `backtest/` **multiple_testing (deflated Sharpe) + hypothesis (validate_hypothesis)** (P2 §5) | — |
-| `ui/` preview (Inv 9) + dashboard/model + api/server (stdlib HTTP: dashboard / markets / **coin** pages) + screener + agent_view + markets + **coin_detail** + live wiring | order/trade panel + live order-book feed pixels |
+| `ui/` **COMPLETE §12**: preview + dashboard/model + api/server (stdlib HTTP: dashboard/markets/coin/**orders** pages) + screener + agent_view + markets + coin_detail + **orders_panel** + live wiring + **manual place (Inv 9)** | nice-to-have pixels (order-book depth, richer charts) |
 | `events/log` (append-only, secret-redacted) · `core/` (config hash-lock, secrets, clock, console) | — |
 | `fast_loop.py` (§3 keystone, sentiment+regime-wired) · `dry_run.py` (paper CLI, `--sentiment-state`, `--serve-ui`) · `ui/live.py` (UI↔live dry-run) | — |
 
@@ -112,9 +112,11 @@ python scripts/dryrun_parity.py --exchange bitbank --pair BTC/JPY --days 30
    page at `GET /`, `python -m src.ui.server`), `ui/screener.py`, `ui/agent_view.py`. Only the
    richer *market* surfaces (watchlist/coin-detail K-line/heatmap pixels, need a multi-asset feed)
    + `ui/markets.py` (`/markets` watchlist+heatmap, `/api/markets`) are DONE. Only coin-detail
-   coin-detail (`/coin` K-line) is DONE; only an order/trade panel + live order-book feed pixels
-   remain (live-state wiring DONE — `dry_run.py --serve-ui`). Fill realism: `backtest/fill_parity.py`
-   quantifies the §2 optimism gap (seam for an actual Freqtrade dry-run reference); **(b) the gate
+   **the entire §12 operator surface is DONE** (dashboard/markets/coin/orders pages + JSON API +
+   both writes: kill-switch and the risk-gated manual order, all live-wired via `dry_run.py
+   --serve-ui`). Only nice-to-have pixels remain (order-book depth, richer charts). Fill realism:
+   `backtest/fill_parity.py` quantifies the §2 optimism gap (seam for an actual Freqtrade dry-run
+   reference); **(b) the gate
    itself (operational)** — a **≥30-day continuous dry-run** on bitbank BTC/JPY (no crash),
    `dryrun_parity` green, and **restart-safety** verified (kill mid-trade → clean reconcile, no
    double-trade, §9). Then reintroduce Freqtrade for dry-run fill parity.

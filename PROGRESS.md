@@ -357,7 +357,16 @@ Full suite **412**. Then added **fill-parity harness** (`backtest/fill_parity.py
 `SlippageLatencyFill` reference + `compare_fills` → optimism-gap report; the §2/Freqtrade-P3 role,
 Freqtrade-adapter seam, no dep) and **coin-detail** (`ui/coin_detail.py` K-line + EMA overlays +
 readouts; `GET /api/coin?pair=` + `/coin` SVG candlestick page; live smoke 60 candles). Full suite
-**426**, ruff clean. **Remaining (UI):** only an order/trade panel + live order-book feed pixels.
+**426**. Then the **order & trade panel** (`ui/orders_panel.py` read model from the event log:
+attempts w/ source + verdict, submissions, fills; `/api/orders` + `/orders` page) and **manual
+order placing** (`DryRunner.place_manual` — same risk engine + broker as the bot, Inv 3/9,
+lock-serialized vs the loop; `POST /api/order`, 404 when disabled; a preview-gated entry form on
+`/orders`). E2E HTTP verified (POST /api/order opens a real paper position). Full suite **439**,
+ruff clean.
+
+**§12 operator surface is now COMPLETE** (logic + stdlib transport + all read surfaces +
+both writes: kill-switch and the risk-gated manual order; live-wired via `dry_run.py --serve-ui`).
+**Remaining (UI):** only nice-to-have pixels (live order-book depth, richer charts).
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
