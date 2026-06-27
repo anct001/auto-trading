@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+from src.risk.killswitch import KillSwitch
 from src.ui.dashboard.model import build_dashboard
 from src.ui.preview import preview_manual_order
 
@@ -29,3 +30,26 @@ def preview_payload(**kwargs) -> dict:
         "metrics": dict(prev.metrics),
         "order": asdict(prev.order) if prev.order is not None else None,
     }
+
+
+# --- the only UI writes besides a risk-gated order: the human kill-switch (§12, Inv. 3/5) -----
+
+def killswitch_status(ks: KillSwitch) -> dict:
+    """JSON view of the kill-switch state."""
+    return {
+        "engaged": bool(ks.is_halted),
+        "reason": ks.halt_reason or None,
+        "allows_trading": bool(ks.allows_trading()),
+    }
+
+
+def engage_kill(ks: KillSwitch) -> dict:
+    """Human manual kill — always available, halts all trading immediately (Inv. 5)."""
+    ks.manual_kill()
+    return killswitch_status(ks)
+
+
+def rearm_kill(ks: KillSwitch, *, operator: str) -> dict:
+    """Re-arm — the ONLY way back to trading, requires a human operator identity (auditable)."""
+    ks.re_arm(operator=operator)
+    return killswitch_status(ks)

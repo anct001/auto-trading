@@ -47,6 +47,29 @@ def test_dashboard_payload_is_json_serializable():
     assert "killswitch_engaged" in p and "decision_log" in p
 
 
+def test_killswitch_engage_and_rearm_roundtrip():
+    from src.ui.api import killswitch_status, rearm_kill, engage_kill
+    ks = KillSwitch()
+    s = engage_kill(ks)
+    assert s["engaged"] is True and s["reason"] == "manual_kill" and s["allows_trading"] is False
+    assert json.dumps(s)
+    s2 = rearm_kill(ks, operator="anct")
+    assert s2["engaged"] is False and s2["allows_trading"] is True
+    assert killswitch_status(ks)["engaged"] is False
+
+
+def test_rearm_requires_operator():
+    from src.ui.api import rearm_kill
+    ks = KillSwitch()
+    engage = __import__("src.ui.api", fromlist=["engage_kill"]).engage_kill
+    engage(ks)
+    try:
+        rearm_kill(ks, operator="")
+        assert False, "empty operator should be rejected"
+    except ValueError:
+        pass
+
+
 def test_preview_payload_carries_verdict_and_is_json():
     ctx = engine.RiskContext(prices={PAIR: 10_000_000.0}, exchange_state=dict(_GOOD),
                              killswitch=KillSwitch(),
