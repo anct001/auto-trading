@@ -117,20 +117,28 @@ def _validate_entry(
         if not result.ok:
             reasons.append(result.reason)
 
-    # order-level exposure checks
-    for result in (
-        limits.check_gross_exposure(order, state, cfg, ctx.prices),
-        limits.check_per_asset(order, state, cfg, ctx.prices),
-        limits.check_concurrency(order, state, cfg),
-        limits.check_correlation_cluster(order, state, cfg, ctx.prices, ctx.correlations),
-    ):
-        if not result.ok:
-            reasons.append(result.reason)
+    # concurrency needs no prices
+    concurrency = limits.check_concurrency(order, state, cfg)
+    if not concurrency.ok:
+        reasons.append(concurrency.reason)
 
-    if ctx.betas is not None and ctx.max_beta is not None:
-        beta = limits.check_portfolio_beta(order, state, ctx.prices, ctx.betas, ctx.max_beta)
-        if not beta.ok:
-            reasons.append(beta.reason)
+    # price-dependent exposure checks. Fail-closed if any required price is absent: we cannot
+    # evaluate exposure without it, so reject rather than KeyError-crash mid-gate.
+    missing = sorted(p for p in ({order.pair} | set(state.positions)) if p not in ctx.prices)
+    if missing:
+        reasons.append("missing_price:" + ",".join(missing))
+    else:
+        for result in (
+            limits.check_gross_exposure(order, state, cfg, ctx.prices),
+            limits.check_per_asset(order, state, cfg, ctx.prices),
+            limits.check_correlation_cluster(order, state, cfg, ctx.prices, ctx.correlations),
+        ):
+            if not result.ok:
+                reasons.append(result.reason)
+        if ctx.betas is not None and ctx.max_beta is not None:
+            beta = limits.check_portfolio_beta(order, state, ctx.prices, ctx.betas, ctx.max_beta)
+            if not beta.ok:
+                reasons.append(beta.reason)
 
     if ctx.market is not None:
         feasibility = _feasibility_reason(order, ctx.market)

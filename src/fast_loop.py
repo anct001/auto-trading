@@ -29,7 +29,7 @@ from src.events.log import (
     log_risk_decision,
 )
 from src.execution.broker import Broker, SubmitResult
-from src.execution.stops import StopManager, StopResult
+from src.execution.stops import StopManager, StopResult, protective_stop_price
 from src.features.indicators import atr as atr_fn
 from src.risk import engine
 from src.risk.config import RiskConfig
@@ -110,6 +110,13 @@ class FastLoop:
         if not sized.feasible:
             self.events.append("EntrySkipped", {"pair": self.pair, "reason": sized.reason})
             return TickResult("skip", INTENT_ENTER_LONG, reason=sized.reason)
+
+        # never open a position we cannot protect: if the ATR-based stop would be non-positive
+        # (volatility exceeds the entry price), skip the entry rather than hold it naked (§4).
+        stop_px = protective_stop_price(price, atr_now, self.atr_stop_mult, self.market.tick_size)
+        if stop_px <= 0:
+            self.events.append("EntrySkipped", {"pair": self.pair, "reason": "unprotectable"})
+            return TickResult("skip", INTENT_ENTER_LONG, reason="unprotectable")
 
         order = sized.to_order(source="strategy")
         decision = engine.validate(order, state, self.cfg, ctx)

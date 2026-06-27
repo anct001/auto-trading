@@ -79,6 +79,15 @@ def test_depeg_blocks_buy():
     assert not d.approved and "quote_depeg" in d.reasons
 
 
+def test_missing_price_fails_closed_not_crash():
+    # a held position whose price is absent from ctx.prices must reject cleanly, never KeyError
+    state = _state(positions={"ETH/USDT": Position("ETH/USDT", 1.0, 100.0)})
+    ctx = _ctx({"BTC/USDT": 10000.0})  # ETH/USDT price deliberately missing
+    d = engine.validate(_buy(notional=100.0), state, _cfg(), ctx)
+    assert not d.approved
+    assert any(r.startswith("missing_price") for r in d.reasons)
+
+
 def test_per_asset_cap_blocks_buy():
     d = engine.validate(_buy(notional=2600.0), _state(), _cfg(), _ctx({"BTC/USDT": 1.0}))
     assert not d.approved and "per_asset_cap" in d.reasons

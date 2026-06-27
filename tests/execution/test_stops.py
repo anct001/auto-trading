@@ -59,6 +59,20 @@ def test_idempotent_no_duplicate_stop():
     assert r1.exchange_id == r2.exchange_id
 
 
+def test_protective_stop_price_can_be_non_positive_for_extreme_vol():
+    # ATR exceeding the entry price drives the stop ≤ 0
+    assert protective_stop_price(100.0, 80.0, 2.0, 0.1) <= 0
+
+
+def test_attach_rejects_non_positive_stop():
+    import pytest
+
+    ex = FakeExchange()
+    with pytest.raises(ValueError):
+        StopManager(ex, _MARKETS).attach(pair="BTC/USDT", qty=1.0, stop_price=-5.0, client_order_id="s1")
+    assert ex.created == []  # no invalid order sent
+
+
 def test_attach_protective_computes_price_from_entry_and_atr():
     ex = FakeExchange()
     mgr = StopManager(ex, _MARKETS)

@@ -55,6 +55,10 @@ class StopManager:
         market = self._markets[pair]
         amount = floor_to_step(qty, market.lot_step)
         price = floor_to_step(stop_price, market.tick_size)
+        if price <= 0:
+            # a non-positive stop means volatility exceeded the entry price — an invalid order and
+            # effectively no protection. Refuse: the caller must not hold an unprotectable position.
+            raise ValueError(f"non-positive protective stop price {price} (vol too high vs entry)")
         params = {"reduceOnly": True, "stopPrice": price, "clientOrderId": client_order_id}
 
         reply = self._exchange.create_order(pair, "stop", "sell", amount, price, params)

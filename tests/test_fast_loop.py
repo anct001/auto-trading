@@ -148,6 +148,20 @@ def test_infeasible_size_is_skipped(tmp_path):
     assert ex.created == []
 
 
+def test_skips_entry_when_stop_would_be_non_positive(tmp_path):
+    # extreme intrabar range → ATR exceeds the entry price → protective stop ≤ 0 → don't open naked
+    rows = [[T0 + i * HOUR, 100.0, 200.0, 1.0, 100.0, 10.0] for i in range(8)]
+    df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+    ex = FakeExchange()
+    # big equity so sizing stays feasible despite the huge stop distance
+    state = PortfolioState(equity=1e9, peak_equity=1e9, day_start_equity=1e9, quote_price=1.0)
+    res = _loop(ex, EventLog(tmp_path / "e.jsonl"), FakeStrategy(INTENT_ENTER_LONG)).tick(
+        df, state, _ctx(), client_order_id="t1"
+    )
+    assert res.action == "skip" and res.reason == "unprotectable"
+    assert ex.created == []  # nothing opened
+
+
 def test_exit_flow_sells_the_held_position(tmp_path):
     ex = FakeExchange()
     events = EventLog(tmp_path / "e.jsonl")
