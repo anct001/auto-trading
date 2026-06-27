@@ -192,6 +192,19 @@ def test_demo_agentview_provider():
     assert ctx.agentview("ZZZ/JPY")["traded"] is False
 
 
+def test_terminal_page_tiles_all_surfaces():
+    r = handle_request("GET", "/terminal", None, _ctx())
+    assert r.status == 200 and r.content_type.startswith("text/html")
+    # one dense grid page that pulls every read API + the two writes
+    for api in ("/api/dashboard", "/api/markets", "/api/coin", "/api/orderbook",
+                "/api/agentview", "/api/stream", "/api/order", "/api/killswitch/engage"):
+        assert api in r.body
+    for tile in ("Watchlist", "Heatmap", "Order book", "Positions", "Agent view"):
+        assert tile in r.body
+    # self-contained: only the SVG namespace is external
+    assert "http" not in r.body.replace("http://www.w3.org/2000/svg", "")
+
+
 def test_coin_page_has_agentview_panel():
     r = handle_request("GET", "/coin", None, _ctx())
     assert "/api/agentview" in r.body and "Agent view" in r.body

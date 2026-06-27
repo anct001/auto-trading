@@ -151,6 +151,17 @@ def test_agentview_non_traded_pair(tmp_path):
     assert build_live_context(runner).agentview("ETH/USDT")["traded"] is False
 
 
+def test_live_coin_and_markets_populate_from_frame(tmp_path):
+    runner = _runner(tmp_path, [INTENT_HOLD])
+    runner.run_once()  # fill the rolling buffer
+    ctx = build_live_context(runner)
+    coin = ctx.coin(PAIR)
+    assert coin["pair"] == PAIR and len(coin["candles"]) > 0
+    mk = ctx.markets()
+    assert len(mk["overview"]) == 1 and mk["overview"][0]["pair"] == PAIR
+    assert len(mk["heatmap"]) == 1
+
+
 def test_killswitch_is_shared_with_the_loop(tmp_path):
     runner = _runner(tmp_path, [INTENT_HOLD])
     ctx = build_live_context(runner)

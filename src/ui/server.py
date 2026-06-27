@@ -91,6 +91,11 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
         empty = {"attempts": [], "submitted": [], "fills": []}
         return Response(200, ctx.orders() if ctx.orders else empty)
 
+    if path == "/terminal":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, terminal_html(), content_type="text/html; charset=utf-8")
+
     if path == "/markets":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
@@ -173,7 +178,7 @@ def index_html() -> str:
  body.light th,body.light td{border-color:#e5e8ee} body.light .bar{background:#e5e8ee}
  body.light button{background:#eceef2;color:#1c2230;border-color:#cdd3dd}
 </style></head><body>
-<h1>Operator dashboard <a href="/markets">· markets</a> <a href="/orders">· orders</a> <span id="ks" class="muted"></span></h1>
+<h1>Operator dashboard <a href="/terminal">· terminal</a> <a href="/markets">· markets</a> <a href="/orders">· orders</a> <span id="ks" class="muted"></span></h1>
 <div class="grid" id="cards"></div>
 <div class="card" style="min-width:100%"><div class="lbl">Equity curve</div><svg id="eq" viewBox="0 0 900 130" preserveAspectRatio="none"></svg></div>
 <div class="grid" id="perf"></div>
@@ -248,6 +253,110 @@ async function rearm(){const op=prompt("Operator identity (human re-enable):");i
 if(localStorage.getItem("uitheme")==="light")document.body.classList.add("light");
 poll();setInterval(poll,5000);  // poll fallback (cheap)
 try{const es=new EventSource("/api/stream");es.onmessage=e=>{try{render(JSON.parse(e.data));}catch(_){}};}catch(_){}
+</script></body></html>"""
+
+
+def terminal_html() -> str:
+    """Dense single-screen operator terminal (§12) — tiles every read surface in a grid.
+
+    Inspired by multi-widget trading terminals: KPI strip + watchlist + heatmap + candles-with-
+    volume + order-book ladder & depth + positions + agent-view, all over the existing JSON APIs
+    (no new backend). Self-contained, no CDN; read-only except the kill-switch + flatten (Inv 9).
+    """
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Terminal</title>
+<style>
+ *{box-sizing:border-box} body{font:12px ui-monospace,Menlo,Consolas,monospace;background:#0b0e14;color:#cdd3de;margin:0;padding:8px}
+ a{color:#6ea8fe;text-decoration:none} .ok{color:#3fd07f} .bad{color:#f06a6a} .warn{color:#e6a23c} .mut{color:#5f6b7a}
+ .grid{display:grid;gap:8px;grid-template-columns:repeat(12,1fr);grid-auto-rows:minmax(40px,auto)}
+ .tile{background:#11151c;border:1px solid #1e2530;border-radius:6px;padding:8px;overflow:auto}
+ .t{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#7a8699;margin-bottom:6px}
+ table{border-collapse:collapse;width:100%} td,th{padding:2px 6px;text-align:right;white-space:nowrap}
+ td:first-child,th:first-child{text-align:left} tr:hover{background:#161b24}
+ .kpi{display:flex;flex-direction:column} .kpi b{font-size:18px} svg{display:block;width:100%}
+ button{background:#222a36;color:#cdd3de;border:1px solid #313b4a;border-radius:4px;padding:3px 8px;cursor:pointer;font:inherit}
+ #heat{display:flex;flex-wrap:wrap;gap:3px} .hx{flex:1 1 60px;min-height:46px;border-radius:4px;padding:4px;color:#0b0e14;font-weight:700}
+ input{background:#0b0e14;color:#cdd3de;border:1px solid #313b4a;border-radius:4px;padding:3px;font:inherit;width:90px}
+</style></head><body>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+ <b>OPERATOR TERMINAL</b> <span id="ks" class="mut"></span>
+ <span>pair <input id="pair" value="BTC/JPY"><button onclick="setPair()">go</button>
+ · <a href="/">classic</a> <a href="/markets">markets</a> <a href="/orders">orders</a>
+ <button class="bad" onclick="engage()">KILL</button></span></div>
+<div class="grid">
+ <div class="tile" style="grid-column:span 12" id="kpis"></div>
+ <div class="tile" style="grid-column:span 3" id="watch"><div class="t">Watchlist</div><table><tbody></tbody></table></div>
+ <div class="tile" style="grid-column:span 6"><div class="t">Chart · <span id="cpair"></span></div><svg id="chart" viewBox="0 0 600 300"></svg></div>
+ <div class="tile" style="grid-column:span 3"><div class="t">Order book <span id="spread" class="mut"></span></div><svg id="depth" viewBox="0 0 300 120"></svg><table id="ob"><tbody></tbody></table></div>
+ <div class="tile" style="grid-column:span 4"><div class="t">Heatmap (24h)</div><div id="heat"></div></div>
+ <div class="tile" style="grid-column:span 4"><div class="t">Positions</div><table id="pos"><tbody></tbody></table></div>
+ <div class="tile" style="grid-column:span 4"><div class="t">Agent view</div><div id="agent"></div><div class="t" style="margin-top:8px">Decision log</div><div id="log" style="font-size:11px"></div></div>
+</div>
+<script>
+const NS="http://www.w3.org/2000/svg",C={ok:"#3fd07f",bad:"#f06a6a",warn:"#e6a23c"};
+let PAIR=new URLSearchParams(location.search).get("pair")||"BTC/JPY";
+document.getElementById("pair").value=PAIR;
+const f=(n,d=2)=>n==null?"—":Number(n).toLocaleString(undefined,{maximumFractionDigits:d});
+const j=async u=>{try{return await (await fetch(u)).json();}catch(e){return null;}};
+function el(t,a){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;}
+function setPair(){PAIR=document.getElementById("pair").value.toUpperCase();history.replaceState(0,"","?pair="+encodeURIComponent(PAIR));renderCoin();}
+async function engage(){await fetch("/api/killswitch/engage",{method:"POST"});renderDash();}
+async function flatten(p,q,pr){if(!confirm("Flatten "+p+"?"))return;await fetch("/api/order",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({side:"sell",pair:p,qty:q,price:pr})});renderDash();}
+function renderDash(d){ if(!d){return j("/api/dashboard").then(renderDash);}
+ const grc=d.gross_exposure_pct>d.gross_cap_pct?"bad":"ok";
+ const pf=d.performance||{};const h=d.health||{};
+ const k=[["Equity",f(d.equity),""],["Day P&L %",f(d.day_return_pct,3),d.day_return_pct>=0?"ok":"bad"],
+  ["Drawdown %",f(d.drawdown_pct,3),d.drawdown_pct<=d.killswitch_pct/2?"bad":"warn"],
+  ["Gross %",f(d.gross_exposure_pct,2),grc],["Win %",pf.trade_count?f(pf.win_rate*100,1):"—",""],
+  ["Prof.factor",pf.trade_count?(pf.profit_factor==null?"∞":f(pf.profit_factor)):"—",""],
+  ["Realized P&L",f(pf.total_pnl||0),pf.total_pnl>=0?"ok":"bad"],["Trades",pf.trade_count??0,""]];
+ document.getElementById("kpis").innerHTML='<div style="display:flex;gap:18px;flex-wrap:wrap">'+
+  k.map(x=>`<div class="kpi"><span class="t">${x[0]}</span><b class="${x[2]}">${x[1]}</b></div>`).join("")+'</div>';
+ document.getElementById("ks").innerHTML=(d.killswitch_engaged?'<span class="bad">KILLED</span>':'<span class="ok">armed</span>')+
+  (h.last_tick_at?` · ticks ${h.tick_count} · ${h.last_tick_at.slice(11,19)}Z`:"");
+ document.querySelector("#pos tbody").innerHTML=(d.positions||[]).map(p=>
+  `<tr><td>${p.pair}</td><td>${f(p.qty,6)}</td><td class="${p.unrealized_pnl>=0?'ok':'bad'}">${f(p.unrealized_pnl)}</td><td><button onclick="flatten('${p.pair}',${p.qty},${p.price})">×</button></td></tr>`).join("")||'<tr><td class=mut>flat</td></tr>';
+ document.getElementById("log").innerHTML=(d.decision_log||[]).slice(0,8).map(e=>`<div class=mut>${(e.timestamp||"").slice(11,19)} <b>${e.type}</b> ${e.detail||""}</div>`).join("");
+}
+async function renderMarkets(){const m=await j("/api/markets");if(!m)return;
+ document.querySelector("#watch tbody").innerHTML=(m.overview||[]).map(r=>
+  `<tr onclick="document.getElementById('pair').value='${r.pair}';setPair()" style="cursor:pointer"><td>${r.pair}</td><td>${f(r.close)}</td><td class="${r.change_pct>=0?'ok':'bad'}">${f(r.change_pct,2)}%</td></tr>`).join("");
+ const tiles=m.heatmap||[],mx=Math.max(1,...tiles.map(t=>t.size||0));
+ document.getElementById("heat").innerHTML=tiles.map(t=>{const c=t.change_pct>=0?C.ok:C.bad;
+  return `<div class="hx" style="flex-grow:${Math.max(1,(t.size||0)/mx*5)};background:${c}">${t.pair.split('/')[0]}<br>${f(t.change_pct,1)}%</div>`;}).join("");
+}
+async function renderCoin(){document.getElementById("cpair").textContent=PAIR;
+ const d=await j("/api/coin?pair="+encodeURIComponent(PAIR));const c=(d&&d.candles)||[];
+ const svg=document.getElementById("chart");svg.innerHTML="";const W=600,H=300,pad=4,vh=60,ch=H-vh-pad;
+ if(c.length<2){svg.appendChild(el("text",{x:8,y:20,fill:"#5f6b7a"}));svg.lastChild.textContent="no data";return;}
+ const lo=Math.min(...c.map(k=>k.l)),hi=Math.max(...c.map(k=>k.h)),vmax=Math.max(...c.map(k=>k.v||0));
+ const x=i=>pad+i*(W-2*pad)/(c.length-1),y=v=>pad+ch-(v-lo)/((hi-lo)||1)*ch,cw=Math.max(1,(W-2*pad)/c.length*0.7);
+ c.forEach((k,i)=>{const up=k.c>=k.o,col=up?C.ok:C.bad;
+  svg.appendChild(el("line",{x1:x(i),x2:x(i),y1:y(k.h),y2:y(k.l),stroke:col}));
+  svg.appendChild(el("rect",{x:x(i)-cw/2,width:cw,y:y(Math.max(k.o,k.c)),height:Math.max(1,Math.abs(y(k.o)-y(k.c))),fill:col}));
+  const bh=(k.v||0)/(vmax||1)*vh;svg.appendChild(el("rect",{x:x(i)-cw/2,width:cw,y:H-pad-bh,height:bh,fill:col,opacity:.45}));});
+ const ov=d.overlays||{},mk=a=>(a||[]).map((v,i)=>v==null?null:x(i)+","+y(v)).filter(Boolean).join(" ");
+ [["ema_fast","#e6a23c"],["ema_slow","#6ea8fe"]].forEach(([kk,cc])=>{const p=el("polyline",{points:mk(ov[kk]),fill:"none",stroke:cc,"stroke-width":1});svg.appendChild(p);});
+ renderBook();renderAgent();
+}
+async function renderBook(){const b=await j("/api/orderbook?pair="+encodeURIComponent(PAIR));if(!b)return;
+ document.getElementById("spread").textContent=b.mid==null?"":`mid ${f(b.mid)} · ${f(b.spread_pct,3)}%`;
+ const asks=(b.asks||[]).slice().reverse(),bids=b.bids||[];
+ document.querySelector("#ob tbody").innerHTML=asks.slice(-6).map(r=>`<tr><td class=bad>${f(r.price)}</td><td>${f(r.amount,4)}</td></tr>`).join("")+
+  bids.slice(0,6).map(r=>`<tr><td class=ok>${f(r.price)}</td><td>${f(r.amount,4)}</td></tr>`).join("")||'<tr><td class=mut>no book</td></tr>';
+ const svg=document.getElementById("depth");svg.innerHTML="";const W=300,H=120;
+ const bc=(b.bids||[]).map(r=>r.cum),ac=(b.asks||[]).map(r=>r.cum),mx=Math.max(1,...bc,...ac);
+ (b.bids||[]).forEach((r,i,a)=>svg.appendChild(el("rect",{x:0,y:i*H/Math.max(1,a.length),width:r.cum/mx*W/2,height:H/Math.max(1,a.length)-1,fill:C.ok,opacity:.5})));
+ (b.asks||[]).forEach((r,i,a)=>svg.appendChild(el("rect",{x:W/2,y:i*H/Math.max(1,a.length),width:r.cum/mx*W/2,height:H/Math.max(1,a.length)-1,fill:C.bad,opacity:.5})));
+}
+async function renderAgent(){const a=await j("/api/agentview?pair="+encodeURIComponent(PAIR));const e=document.getElementById("agent");if(!a){e.textContent="";return;}
+ if(a.traded===false){e.innerHTML='<span class=mut>not in traded set</span>';return;}
+ const act=a.acting?'<b class=ok>ACTING</b>':'<span class=mut>idle</span>';
+ e.innerHTML=`signal <b>${a.signal||"?"}</b> · ${act} ${(a.blocked_by||[]).length?'· '+a.blocked_by.join(", "):""}<br>regime ${a.regime_enabled?'on':'OFF'} · sentiment×${f(a.sentiment_haircut??1,2)} · ${a.killswitch_engaged?'<b class=bad>KILLED</b>':'armed'}`;
+}
+renderDash();renderMarkets();renderCoin();
+setInterval(()=>{renderMarkets();renderCoin();},6000);
+try{const es=new EventSource("/api/stream");es.onmessage=ev=>{try{renderDash(JSON.parse(ev.data));}catch(_){}};}catch(_){ setInterval(renderDash,5000);}
 </script></body></html>"""
 
 

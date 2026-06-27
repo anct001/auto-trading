@@ -60,6 +60,22 @@ def build_live_context(runner) -> OperatorContext:
         from src.ui.orders_panel import build_order_trade_panel
         return build_order_trade_panel(runner.loop.events.read_all())
 
+    def _coin(p: str) -> dict:
+        from src.ui.coin_detail import build_coin_detail
+        df = runner.current_frame()
+        if p != runner.pair or df is None or len(df) == 0:
+            return {"pair": p, "candles": [], "overlays": {"ema_fast": [], "ema_slow": []},
+                    "readouts": {}}
+        return build_coin_detail(runner.pair, df)
+
+    def _markets() -> dict:
+        from src.ui.markets import build_markets_overview, heatmap_tiles
+        df = runner.current_frame()
+        if df is None or len(df) == 0:
+            return {"overview": [], "heatmap": []}
+        overview = build_markets_overview({runner.pair: df})
+        return {"overview": overview, "heatmap": heatmap_tiles(overview)}
+
     def _agentview(p: str) -> dict:
         from datetime import datetime, timezone
 
@@ -100,4 +116,5 @@ def build_live_context(runner) -> OperatorContext:
         )
 
     return OperatorContext(dashboard=_dashboard, preview=_preview, killswitch=runner.killswitch,
-                           orders=_orders, place=_place, orderbook=_orderbook, agentview=_agentview)
+                           orders=_orders, place=_place, orderbook=_orderbook, agentview=_agentview,
+                           coin=_coin, markets=_markets)
