@@ -42,6 +42,10 @@
   Freqtrade returns at P3 for dry-run parity (see `PLAN.md` Slice 6).
 - **Config is hash-locked** (`config/config.lock.json`, §15) — re-lock after any intentional
   config change (regenerate via `core.config.build_manifest` + `write_manifest`).
+- **UI: keep our self-hosted stdlib surface (don't adopt QuantIDE/external platforms).** Evaluated
+  quantide.io 2026-06-28: it's a separate paid trading *platform* (Cody = AI-generates-orders,
+  Q-EVOLVE = batch-optimizer) that conflicts with Inv 1 / §5 and isn't an embeddable UI lib. The
+  §12 dashboard stays dependency-free, self-hosted, data-never-leaves; enhance it in-repo.
 
 ## Security/correctness audit — 13 findings, ALL fixed (don't re-find)
 
