@@ -35,6 +35,7 @@ def build_live_context(runner) -> OperatorContext:
         return dashboard_payload(
             state=runner.snapshot_state(), cfg=cfg, prices=runner.marks(),
             killswitch=runner.killswitch, events=runner.loop.events.read_all(),
+            equity_history=runner.equity_history(),
         )
 
     def _preview(body: dict) -> dict:

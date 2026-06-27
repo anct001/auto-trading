@@ -61,6 +61,7 @@ class DashboardState:
     killswitch_reason: str | None
     sentiment_fresh: bool | None
     decision_log: list[DecisionLogEntry] = field(default_factory=list)
+    equity_curve: list[dict] = field(default_factory=list)  # [{t, equity}] for the UI chart
 
 
 def _detail(ev: Event) -> str:
@@ -100,6 +101,7 @@ def build_dashboard(
     sentiment_state: SentimentState | None = None,
     now: datetime | None = None,
     decision_log_limit: int = 20,
+    equity_history: list[dict] | None = None,
 ) -> DashboardState:
     """Derive the read-only operator dashboard state. Pure; never trades."""
     eq = state.equity
@@ -137,4 +139,5 @@ def build_dashboard(
         killswitch_reason=(killswitch.halt_reason or None) if killswitch and killswitch.is_halted else None,
         sentiment_fresh=sentiment_fresh,
         decision_log=_decision_log(events, decision_log_limit),
+        equity_curve=list(equity_history or []),
     )

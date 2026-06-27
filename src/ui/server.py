@@ -157,27 +157,48 @@ def index_html() -> str:
  th:first-child,td:first-child{text-align:left} button{background:#2a2f3a;color:#d7dbe0;border:1px solid #3a4151;border-radius:6px;padding:8px 14px;cursor:pointer}
  button.kill{background:#5a1f24;border-color:#7a2a30} #log div{font-family:monospace;font-size:12px;color:#9aa3b2;padding:2px 0}
  .muted{color:#6b7280;font-size:12px}
+ .bar{height:6px;background:#232833;border-radius:3px;margin-top:8px;overflow:hidden}
+ .barfill{height:100%;border-radius:3px;transition:width .4s}
+ svg#eq{background:#171a21;border:1px solid #232833;border-radius:8px;width:100%;height:130px}
 </style></head><body>
 <h1>Operator dashboard <a href="/markets">· markets</a> <a href="/orders">· orders</a> <span id="ks" class="muted"></span></h1>
 <div class="grid" id="cards"></div>
+<div class="card" style="min-width:100%"><div class="lbl">Equity curve</div><svg id="eq" viewBox="0 0 900 130" preserveAspectRatio="none"></svg></div>
 <div class="card" style="min-width:100%"><div class="lbl">Open positions</div><table id="pos"><thead>
 <tr><th>Pair</th><th>Qty</th><th>Value</th><th>Unrealized</th><th>Exposure %</th></tr></thead><tbody></tbody></table></div>
 <div class="card" style="min-width:100%"><div class="lbl">Decision log</div><div id="log"></div></div>
 <div style="margin-top:12px"><button class="kill" onclick="engage()">Engage kill-switch</button>
 <button onclick="rearm()">Re-arm</button> <span id="msg" class="muted"></span></div>
 <script>
+const COL={ok:"#46d17f",warn:"#e6a23c",bad:"#f06a6a"};
 const fmt=(n)=>typeof n==="number"?n.toLocaleString(undefined,{maximumFractionDigits:4}):n;
 function cls(v,soft,hard){if(v<=hard)return"bad";if(v<=soft)return"warn";return"ok";}
+function gauge(pct,c){pct=Math.max(0,Math.min(100,pct));
+ return `<div class="bar"><div class="barfill" style="width:${pct}%;background:${COL[c]}"></div></div>`;}
+function drawEquity(curve){
+ const svg=document.getElementById("eq");svg.innerHTML="";const W=900,H=130,pad=8;
+ if(!curve||curve.length<2){svg.innerHTML='<text x=12 y=24 fill="#6b7280">accumulating…</text>';return;}
+ const ys=curve.map(p=>p.equity);const lo=Math.min(...ys),hi=Math.max(...ys);
+ const x=i=>pad+i*(W-2*pad)/(curve.length-1),y=v=>H-pad-(v-lo)/((hi-lo)||1)*(H-2*pad);
+ const up=ys[ys.length-1]>=ys[0],col=up?COL.ok:COL.bad;
+ const pts=curve.map((p,i)=>x(i)+","+y(p.equity)).join(" ");
+ const pl=document.createElementNS("http://www.w3.org/2000/svg","polyline");
+ pl.setAttribute("points",pts);pl.setAttribute("fill","none");pl.setAttribute("stroke",col);pl.setAttribute("stroke-width","1.5");
+ svg.appendChild(pl);}
 async function refresh(){
  try{const d=await (await fetch("/api/dashboard")).json();
+  const dpl=cls(d.day_return_pct,d.daily_soft_pct,d.daily_hard_pct);
+  const ddc=cls(d.drawdown_pct,d.killswitch_pct/2,d.killswitch_pct);
+  const grc=d.gross_exposure_pct>d.gross_cap_pct?"bad":(d.gross_exposure_pct>d.gross_cap_pct*0.8?"warn":"ok");
   const cards=[
-   ["Equity",fmt(d.equity),""],
-   ["Day P&L %",fmt(d.day_return_pct),cls(d.day_return_pct,d.daily_soft_pct,d.daily_hard_pct)],
-   ["Drawdown %",fmt(d.drawdown_pct),cls(d.drawdown_pct,d.killswitch_pct/2,d.killswitch_pct)],
-   ["Gross exp %",fmt(d.gross_exposure_pct),d.gross_exposure_pct>d.gross_cap_pct?"bad":"ok"],
-   ["Sentiment fresh",String(d.sentiment_fresh),""]];
+   {l:"Equity",v:fmt(d.equity),c:""},
+   {l:"Day P&L %",v:fmt(d.day_return_pct),c:dpl,g:gauge(Math.abs(Math.min(0,d.day_return_pct))/Math.abs(d.daily_hard_pct)*100,dpl)},
+   {l:"Drawdown %",v:fmt(d.drawdown_pct),c:ddc,g:gauge(Math.abs(d.drawdown_pct)/Math.abs(d.killswitch_pct)*100,ddc)},
+   {l:"Gross exp %",v:fmt(d.gross_exposure_pct),c:grc,g:gauge(d.gross_exposure_pct/d.gross_cap_pct*100,grc)},
+   {l:"Sentiment fresh",v:String(d.sentiment_fresh),c:""}];
   document.getElementById("cards").innerHTML=cards.map(c=>
-   `<div class="card"><div class="lbl">${c[0]}</div><div class="val ${c[2]}">${c[1]}</div></div>`).join("");
+   `<div class="card"><div class="lbl">${c.l}</div><div class="val ${c.c}">${c.v}</div>${c.g||""}</div>`).join("");
+  drawEquity(d.equity_curve);
   const ks=d.killswitch_engaged?`<span class="bad">KILLED (${d.killswitch_reason||""})</span>`:`<span class="ok">armed</span>`;
   document.getElementById("ks").innerHTML="· "+ks;
   document.querySelector("#pos tbody").innerHTML=(d.positions||[]).map(p=>

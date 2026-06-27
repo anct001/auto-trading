@@ -17,6 +17,7 @@ import argparse
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from backtest.runner import Costs
 from src.data import feed
@@ -119,6 +120,21 @@ class DryRunner:
         self.prewarm = prewarm
         self._buffer = None
         self._buffer_cap = max(limit, 250)
+        self._equity_history: list[dict] = []  # marked equity per tick/fill, for the UI chart
+        self._equity_cap = 1000
+
+    def _record_equity(self) -> None:
+        """Append the current marked paper equity (caller must hold self._lock)."""
+        self._equity_history.append({
+            "t": datetime.now(timezone.utc).isoformat(),
+            "equity": self.account.equity(self.marks()),
+        })
+        if len(self._equity_history) > self._equity_cap:
+            self._equity_history = self._equity_history[-self._equity_cap:]
+
+    def equity_history(self) -> list[dict]:
+        with self._lock:
+            return list(self._equity_history)
 
     def _prewarm_buffer(self, now_ms: int | None):
         """Gather a deep history buffer once (paginated) so indicators have enough candles."""
@@ -168,15 +184,16 @@ class DryRunner:
         cid = f"{self.pair.replace('/', '')}-{df['timestamp'].iloc[-1].value}"
         result = self.loop.tick(df, state, ctx, client_order_id=cid)
 
-        if result.submit is not None and result.submit.filled > 0 and result.decision is not None:
-            order = result.decision.sized
-            with self._lock:
+        with self._lock:
+            if result.submit is not None and result.submit.filled > 0 and result.decision is not None:
+                order = result.decision.sized
                 if result.action == "enter":
                     self.account.apply_buy(order.pair, result.submit.filled, order.price,
                                            self.costs.taker_fee)
                 elif result.action == "exit":
                     self.account.apply_sell(order.pair, result.submit.filled, order.price,
                                             self.costs.taker_fee)
+            self._record_equity()  # mark-to-market each tick for the UI equity curve
         return result
 
     def marks(self) -> dict[str, float]:
@@ -228,6 +245,7 @@ class DryRunner:
                     self.account.apply_buy(self.pair, submit.filled, order.price, self.costs.taker_fee)
                 else:
                     self.account.apply_sell(self.pair, submit.filled, order.price, self.costs.taker_fee)
+                self._record_equity()  # reflect the manual fill on the UI equity curve
             return {"placed": True, "filled": submit.filled, "reasons": []}
 
     def run(self, *, iterations: int | None = None, poll_seconds: float = 60.0) -> None:

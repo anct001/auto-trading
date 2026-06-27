@@ -99,6 +99,17 @@ def _sparse_runner(strategy, events, prewarm):
     )
 
 
+def test_equity_history_records_each_tick(tmp_path):
+    paper, account = PaperBrokerExchange(), PaperAccount(cash=100000.0)
+    r = _runner(ScriptStrategy([INTENT_HOLD, INTENT_HOLD]), EventLog(tmp_path / "e.jsonl"), paper, account)
+    assert r.equity_history() == []
+    r.run_once()
+    r.run_once()
+    hist = r.equity_history()
+    assert len(hist) == 2
+    assert hist[0]["equity"] == 100000.0 and "t" in hist[0]  # flat → starting equity
+
+
 def test_sparse_feed_without_prewarm_is_insufficient(tmp_path):
     # 12 candles/call < atr_period+2 (16) → the loop can't compute indicators
     r = _sparse_runner(ScriptStrategy([INTENT_HOLD]), EventLog(tmp_path / "e.jsonl"), prewarm=False)

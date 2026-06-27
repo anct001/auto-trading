@@ -69,7 +69,8 @@ def test_index_serves_self_contained_html():
     assert r.status == 200 and r.content_type.startswith("text/html")
     assert isinstance(r.body, str)
     assert "/api/dashboard" in r.body and "kill-switch" in r.body.lower()
-    assert "://" not in r.body  # fully self-contained: no external CDN / remote resource
+    # self-contained: the only external reference allowed is the SVG namespace (no CDN/remote)
+    assert "http" not in r.body.replace("http://www.w3.org/2000/svg", "")
 
 
 def test_index_rejects_write_verb():

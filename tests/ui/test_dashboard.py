@@ -70,6 +70,16 @@ def test_sentiment_freshness_surfaced():
     assert build_dashboard(state=state, cfg=_cfg(), prices={}, now=NOW).sentiment_fresh is None
 
 
+def test_equity_curve_passthrough():
+    state = PortfolioState(equity=1e6, peak_equity=1e6, day_start_equity=1e6, quote_price=1.0)
+    hist = [{"t": "2026-06-27T00:00:00+00:00", "equity": 100.0},
+            {"t": "2026-06-27T01:00:00+00:00", "equity": 101.5}]
+    d = build_dashboard(state=state, cfg=_cfg(), prices={}, now=NOW, equity_history=hist)
+    assert d.equity_curve == hist
+    # defaults to empty when not supplied
+    assert build_dashboard(state=state, cfg=_cfg(), prices={}, now=NOW).equity_curve == []
+
+
 def test_decision_log_from_events(tmp_path):
     log = EventLog(tmp_path / "e.jsonl")
     log.append("SignalGenerated", {"pair": PAIR, "intent": "enter_long"})
