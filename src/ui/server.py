@@ -271,12 +271,34 @@ def orders_html() -> str:
  .ok{color:#46d17f} .bad{color:#f06a6a} .agent{color:#6ea8fe} .manual{color:#e6a23c}
 </style></head><body>
 <h1>Orders &amp; trades <a href="/">· dashboard</a></h1>
+<h2>Manual order (routes through the risk engine — Inv 9)</h2>
+<div>
+ <select id="side"><option>buy</option><option>sell</option></select>
+ <input id="qty" type="number" step="any" placeholder="qty" style="width:120px">
+ <input id="price" type="number" step="any" placeholder="price" style="width:140px">
+ <button onclick="preview()">Preview</button>
+ <button id="placeBtn" onclick="place()" disabled>Place</button>
+ <span id="pv" class="lbl"></span>
+</div>
 <h2>Order attempts (risk verdict + source)</h2>
 <table id="att"><thead><tr><th>Time</th><th>Pair</th><th>Side</th><th>Qty</th><th>Source</th><th>Verdict</th></tr></thead><tbody></tbody></table>
 <h2>Submitted</h2><table id="sub"><thead><tr><th>Time</th><th>Pair</th><th>Side</th><th>Amount</th><th>Client id</th></tr></thead><tbody></tbody></table>
 <h2>Fills</h2><table id="fil"><thead><tr><th>Time</th><th>Pair</th><th>Filled</th></tr></thead><tbody></tbody></table>
 <script>
 const fmt=(n)=>typeof n==="number"?n.toLocaleString(undefined,{maximumFractionDigits:6}):(n??"");
+function body(){return {side:document.getElementById("side").value,
+ qty:parseFloat(document.getElementById("qty").value),
+ price:parseFloat(document.getElementById("price").value)};}
+async function preview(){const r=await (await fetch("/api/preview",{method:"POST",
+ headers:{"Content-Type":"application/json"},body:JSON.stringify(body())})).json();
+ const ok=r.allowed;document.getElementById("placeBtn").disabled=!ok;
+ document.getElementById("pv").innerHTML=ok?'<span class="ok">preview PASS</span>':
+  '<span class="bad">blocked: '+(r.reasons||[]).join("; ")+'</span>';}
+async function place(){const r=await (await fetch("/api/order",{method:"POST",
+ headers:{"Content-Type":"application/json"},body:JSON.stringify(body())})).json();
+ document.getElementById("pv").innerHTML=r.placed?'<span class="ok">placed, filled '+fmt(r.filled)+'</span>':
+  '<span class="bad">not placed: '+((r.reasons||[]).join("; ")||r.error||"")+'</span>';
+ document.getElementById("placeBtn").disabled=true;refresh();}
 async function refresh(){try{const d=await (await fetch("/api/orders")).json();
  document.querySelector("#att tbody").innerHTML=(d.attempts||[]).map(a=>
   `<tr><td>${a.time}</td><td>${a.pair}</td><td>${a.side}</td><td>${fmt(a.qty)}</td><td class="${a.source}">${a.source}</td><td class="${a.approved?'ok':'bad'}">${a.approved?'passed':'rejected: '+(a.reasons||[]).join(';')}</td></tr>`).join("")||"<tr><td>—</td></tr>";
