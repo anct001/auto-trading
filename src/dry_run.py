@@ -107,6 +107,7 @@ class DryRunner:
         self.timeframe = timeframe
         self.limit = limit
         self.killswitch = killswitch or KillSwitch()
+        self.last_prices: dict[str, float] = {}  # latest closed-candle mark per pair (for the UI)
 
     def run_once(self, *, now_ms: int | None = None) -> TickResult | None:
         """Fetch the latest closed candles, run one tick, and update the paper account."""
@@ -118,6 +119,7 @@ class DryRunner:
         if df.empty:
             return None
         last_close = float(df["close"].iloc[-1])
+        self.last_prices[self.pair] = last_close
         ctx = engine.RiskContext(prices={self.pair: last_close},
                                  exchange_state=dict(_GOOD_EXCHANGE), killswitch=self.killswitch)
         state = self.account.to_state({self.pair: last_close})
@@ -133,6 +135,17 @@ class DryRunner:
                 self.account.apply_sell(order.pair, result.submit.filled, order.price,
                                         self.costs.taker_fee)
         return result
+
+    def marks(self) -> dict[str, float]:
+        """Current marks for every held pair: last closed price, falling back to entry price."""
+        m = dict(self.last_prices)
+        for pair, pos in self.account.positions.items():
+            m.setdefault(pair, pos.entry_price)
+        return m
+
+    def snapshot_state(self):
+        """Read-only PortfolioState at current marks — for the operator UI (no trading effect)."""
+        return self.account.to_state(self.marks())
 
     def run(self, *, iterations: int | None = None, poll_seconds: float = 60.0) -> None:
         """CLI loop: tick, then sleep until roughly the next candle. iterations=None runs forever."""
@@ -187,6 +200,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--events", default="events/dry_run.jsonl")
     p.add_argument("--sentiment-state", default=None,
                    help="path to sentiment_state.json (P1 haircut; inert unless sentiment_floor<1.0)")
+    p.add_argument("--serve-ui", action="store_true",
+                   help="serve the read-only operator dashboard over the live paper state")
+    p.add_argument("--ui-port", type=int, default=8787)
     args = p.parse_args(argv)
 
     import os
@@ -205,6 +221,17 @@ def main(argv: list[str] | None = None) -> None:
     )
     print(f"[dry-run] PAPER mode — no real capital. data={args.data_exchange} pair={args.pair} "
           f"tf={args.timeframe} equity={args.equity}")
+
+    if args.serve_ui:
+        import threading
+
+        from src.ui.live import build_live_context
+        from src.ui.server import serve
+        ctx = build_live_context(runner)
+        threading.Thread(target=serve, args=(ctx,), kwargs={"port": args.ui_port},
+                         daemon=True).start()
+        print(f"[dry-run] operator dashboard (read-only) on http://127.0.0.1:{args.ui_port}/")
+
     runner.run(iterations=None if args.iterations == 0 else args.iterations,
                poll_seconds=args.poll_seconds)
 
