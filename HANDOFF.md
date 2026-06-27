@@ -6,23 +6,25 @@
 
 ## Where things stand
 
-- **Branch:** `claude/new-session-vcxyyp` · **Phase:** P0 (harness proven; not formally closed) ·
-  **Tests:** 261 passing, `ruff` clean. Committed (local; push when a remote is configured).
+- **Branch:** `claude/new-session-vcxyyp` · **Phase:** P0 harness proven + **P1 feature built
+  (inert at FLOOR=1.0)**; neither formally closed (both await operator-side operational steps) ·
+  **Tests:** 313 passing, `ruff` clean. Committed (local; push when a remote is configured).
 - **What this is:** a solo-operator, paper-first, phase-gated crypto trading system. Deterministic
-  engine makes every trade; a local LLM (later) is an out-of-loop researcher only.
+  engine makes every trade; a local LLM is an out-of-loop researcher (sentiment size-haircut only).
 
 ## What's built (tested) vs. stub
 
 | Built (real logic, tested) | Still stub / not started |
 |---|---|
-| `data/` feed (closed candles), store (Parquet, reproducible), quality gate (§8.1) | `features/cache.py` |
-| `features/indicators` (EMA, ATR — single feature path) | `llm/**` (P1 sentiment — needs Ollama) |
+| `data/` feed (closed candles + paginated history), store (Parquet, reproducible), quality gate (§8.1) | `features/cache.py` |
+| `features/indicators` (EMA, ATR — single feature path) | `llm/journal.py` (P2 trade journal) |
 | `strategy/` base + `ema_cross` (intent-only) | `ui/**` (P3 operator surfaces) |
-| `backtest/` runner (+protective stop), metrics, walk-forward | `strategy/shadow.py` (P2/P3) |
-| `risk/**` FULL engine R0–R7 (the single gate, sizing, limits, de-peg, exchange-assert, killswitch, runtime tighten-only) | — |
+| `backtest/` runner (+protective stop), metrics, walk-forward, **parity (§8.9)** | `strategy/shadow.py` (P2/P3) |
+| `risk/**` FULL engine R0–R7 + sentiment size-multiplier (tighten-only) | — |
 | `execution/**` broker, stops, reconcile, convergence (E1–E4) | — |
-| `events/log` (append-only, secret-redacted) · `core/` (config hash-lock, secrets, clock) | — |
-| `fast_loop.py` (the §3 keystone) · `dry_run.py` (paper CLI) | — |
+| `llm/` sentiment haircut + state_io + orchestrator + Ollama backend (**P1, inert at FLOOR=1.0**) | — |
+| `events/log` (append-only, secret-redacted) · `core/` (config hash-lock, secrets, clock, console) | — |
+| `fast_loop.py` (the §3 keystone, sentiment-wired) · `dry_run.py` (paper CLI, `--sentiment-state`) | — |
 
 ## Decisions locked this session (don't re-litigate)
 
@@ -85,10 +87,16 @@ python scripts/dryrun_parity.py --exchange bitbank --pair BTC/JPY --days 30
    BTC/JPY, then `python scripts/dryrun_parity.py --exchange bitbank --pair BTC/JPY` against its
    event log to confirm parity holds in production. A *dumb* EMA-cross shows **no edge** on real
    data — P0 is about a proven pipeline, not this strategy's P&L.
-2. **Then P1 (LLM, optional):** wire `llm/**` sentiment as a **bounded size-haircut, FLOOR=1.0**,
-   forward-validated via ablation (§6). Needs Ollama (see `ops/HARDWARE.md`).
-3. **Then P3:** `ui/**` operator dashboard + `strategy/shadow.py`, and reintroduce Freqtrade for
-   dry-run fill parity.
+2. **P1 (LLM sentiment) — code BUILT & tested, inert at FLOOR=1.0; only the ablation remains.**
+   `llm/` has the full pipeline: `sentiment.size_haircut` (bounded modifier), `state_io`,
+   `orchestrator.run_sentiment_cycle` (slow loop), `ollama_client` (stdlib backend). Wired into
+   `FastLoop` + `dry_run.py --sentiment-state`. Remaining (operational, needs Ollama +
+   `ops/HARDWARE.md`): run the slow loop to produce real `sentiment_state.json`, then the
+   **ablation** — parallel dry-runs feature-on vs feature-off for ≥30 days — to decide *forward*
+   if it helps (no historical backtest of the feature — look-ahead, §6). Keep `sentiment_floor`
+   at **1.0** in `config/risk/default.json` until it demonstrably helps; lower it (≥0.5) + re-lock.
+3. **Then P2/P3:** `llm/journal.py` (trade journal), `strategy/shadow.py`, `ui/**` operator
+   dashboard, and reintroduce Freqtrade for dry-run fill parity.
 4. **Never skip a gate; the kill-switch is sacred; no real capital before the §14 checklist.**
 
 ## Hardware

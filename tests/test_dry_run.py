@@ -68,6 +68,26 @@ def _runner(strategy, events, paper, account):
     )
 
 
+def test_sentiment_state_path_wires_a_provider(tmp_path):
+    paper, account = PaperBrokerExchange(), PaperAccount(cash=100000.0)
+    events = EventLog(tmp_path / "e.jsonl")
+    base = build_runner(
+        data_exchange=FakeDataExchange(), paper_exchange=paper, events=events,
+        strategy=ScriptStrategy([INTENT_HOLD]), cfg=_cfg(), costs=_COSTS, market=_MARKET,
+        account=account, pair=PAIR, timeframe="1h",
+    )
+    assert base.loop.sentiment_provider is None  # off by default
+    wired = build_runner(
+        data_exchange=FakeDataExchange(), paper_exchange=paper, events=events,
+        strategy=ScriptStrategy([INTENT_HOLD]), cfg=_cfg(), costs=_COSTS, market=_MARKET,
+        account=account, pair=PAIR, timeframe="1h",
+        sentiment_state_path=str(tmp_path / "sentiment_state.json"),
+    )
+    assert wired.loop.sentiment_provider is not None
+    # absent file → provider returns None (fail-to-neutral), never raises
+    assert wired.loop.sentiment_provider() is None
+
+
 def test_enter_opens_a_paper_position_and_logs(tmp_path):
     paper, account = PaperBrokerExchange(), PaperAccount(cash=100000.0)
     events = EventLog(tmp_path / "e.jsonl")

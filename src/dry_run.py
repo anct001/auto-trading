@@ -151,12 +151,19 @@ class DryRunner:
 def build_runner(*, data_exchange, paper_exchange, events: EventLog, strategy, cfg: RiskConfig,
                  costs: Costs, market: MarketConstraints, account: PaperAccount, pair: str,
                  timeframe: str, limit: int = 200, killswitch: KillSwitch | None = None,
-                 atr_period: int = 14, atr_stop_mult: float = 2.0) -> DryRunner:
+                 atr_period: int = 14, atr_stop_mult: float = 2.0,
+                 sentiment_state_path: str | None = None) -> DryRunner:
     markets = {pair: market}
+    # Optional P1 sentiment haircut: read the slow-loop state file each entry (non-blocking, never
+    # calls the LLM). Inert unless cfg.sentiment_floor < 1.0 (default 1.0 = off, §6/P1).
+    sentiment_provider = None
+    if sentiment_state_path is not None:
+        from src.llm.state_io import load_sentiment_state
+        sentiment_provider = lambda: load_sentiment_state(sentiment_state_path)  # noqa: E731
     loop = FastLoop(
         broker=Broker(paper_exchange, markets), stops=StopManager(paper_exchange, markets),
         events=events, strategy=strategy, cfg=cfg, market=market, pair=pair,
-        atr_period=atr_period, atr_stop_mult=atr_stop_mult,
+        atr_period=atr_period, atr_stop_mult=atr_stop_mult, sentiment_provider=sentiment_provider,
     )
     return DryRunner(data_exchange=data_exchange, loop=loop, account=account, costs=costs,
                      pair=pair, timeframe=timeframe, limit=limit, killswitch=killswitch)
@@ -178,6 +185,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--iterations", type=int, default=1, help="ticks to run (0 = forever)")
     p.add_argument("--poll-seconds", type=float, default=60.0)
     p.add_argument("--events", default="events/dry_run.jsonl")
+    p.add_argument("--sentiment-state", default=None,
+                   help="path to sentiment_state.json (P1 haircut; inert unless sentiment_floor<1.0)")
     args = p.parse_args(argv)
 
     import os
@@ -192,6 +201,7 @@ def main(argv: list[str] | None = None) -> None:
         data_exchange=data_ex, paper_exchange=PaperBrokerExchange(), events=EventLog(args.events),
         strategy=EmaCross(ema_fast=12, ema_slow=26), cfg=cfg, costs=costs, market=market,
         account=PaperAccount(cash=args.equity), pair=args.pair, timeframe=args.timeframe,
+        sentiment_state_path=args.sentiment_state,
     )
     print(f"[dry-run] PAPER mode — no real capital. data={args.data_exchange} pair={args.pair} "
           f"tf={args.timeframe} equity={args.equity}")

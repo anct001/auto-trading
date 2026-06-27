@@ -289,6 +289,22 @@ one with OHLCV support** (bitflyer/coincheck/zaif return no candles via ccxt). b
   **519/519 (rate=1.0000)** on 30d of bitbank 1h. bitbank serves 1h one-day-per-call (deep pull =
   many calls); no public sandbox (paper/dry-run until P4). Full suite **261 passed**, ruff clean.
 
+### 2026-06-27 (local session, cont.) — P1 LLM sentiment feature BUILT (inert at FLOOR=1.0)
+Operator chose "continue to P1, reserve bitbank." Built the whole sentiment pipeline with TDD,
+no Ollama needed for tests. The feature is wired but a **strict no-op at the default FLOOR=1.0**
+(§6) so the P0 path is byte-for-byte preserved.
+- **Consumer:** `llm/sentiment.size_haircut` (multiplier ∈ [floor,1.0], only bearish shrinks,
+  never grows/triggers/flips/vetoes, absent/stale→neutral); `llm/state_io` (sentiment_state.json
+  r/w, any problem→neutral); `risk/sizing` `size_multiplier` (tighten-only, >1 clamped, backtest
+  never passes it — no look-ahead §6); `RiskConfig.sentiment_floor` (default 1.0, [0.5,1.0],
+  re-locked); `FastLoop._enter` applies + logs `SentimentHaircut`, fails neutral on any error.
+- **Producer (slow loop):** `llm/orchestrator.run_sentiment_cycle` (per-pair classify→clamp→write,
+  one pair's failure never breaks the cycle); `llm/ollama_client` (stdlib-urllib Ollama backend,
+  format=json, temp 0, bounded tokens; transport injected → parsing tested offline).
+- **Wiring:** `dry_run.py --sentiment-state <path>`. Full suite **261→313 passed**, ruff clean.
+- **Remaining (operational):** run Ollama, produce real sentiment_state.json, run the ≥30-day
+  ablation (feature on vs off) to decide forward if it helps; FLOOR stays 1.0 until it does.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.
@@ -323,8 +339,8 @@ first slice. Next: write `PLAN.md` (slices, each with a proof command), then bui
 
 | Phase | State | Gate |
 |-------|-------|------|
-| P0 data harness | **in progress (scaffold only)** | §8 proven |
-| P1 LLM sentiment feature | not started | forward-validated ablation |
+| P0 data harness | **code proven on real venue; awaiting operator's bitbank account close** | §8 proven |
+| P1 LLM sentiment feature | **built + tested, inert at FLOOR=1.0; awaiting Ollama + ablation** | forward-validated ablation |
 | P2 hypothesis generation | not started | ≥1 LLM strategy walk-forward validated |
 | P3 monitor/orchestrate | not started | ≥30d dry-run, signal metrics ≈ backtest |
 | P4 tiny real capital | not started | §14 go-live checklist + human sign-off |
