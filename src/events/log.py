@@ -13,6 +13,7 @@ Two hard properties:
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,13 +42,34 @@ def _is_secret_key(key: str) -> bool:
     return any(hint in low for hint in _SECRET_HINTS)
 
 
+# Secrets can also hide in VALUES (a credentialed URL, a key pasted into an error/free-text field).
+# These patterns catch the realistic cases without over-redacting ordinary text.
+_URL_CREDENTIALS = re.compile(r"(\w+://)[^/\s:@]+:[^/\s@]+@")
+_KEY_TOKEN = re.compile(
+    r"(?:AKIA[0-9A-Z]{12,}"          # AWS access key id
+    r"|AIza[0-9A-Za-z_\-]{20,}"      # Google/Gemini API key
+    r"|sk-[A-Za-z0-9]{12,}"          # OpenAI-style
+    r"|ghp_[A-Za-z0-9]{20,}"         # GitHub token
+    r"|xox[baprs]-[A-Za-z0-9\-]{10,})"  # Slack token
+)
+
+
+def _redact_value(value: Any) -> Any:
+    """Redact secret-looking substrings inside a string value (URLs creds, known key tokens)."""
+    if not isinstance(value, str):
+        return value
+    value = _URL_CREDENTIALS.sub(r"\1" + REDACTED + "@", value)
+    value = _KEY_TOKEN.sub(REDACTED, value)
+    return value
+
+
 def redact(obj: Any) -> Any:
-    """Recursively replace secret-named fields with REDACTED (dicts and lists are traversed)."""
+    """Recursively redact secret-named fields AND secret-looking values (dicts/lists traversed)."""
     if isinstance(obj, dict):
         return {k: (REDACTED if _is_secret_key(str(k)) else redact(v)) for k, v in obj.items()}
     if isinstance(obj, list):
         return [redact(v) for v in obj]
-    return obj
+    return _redact_value(obj)
 
 
 @dataclass(frozen=True)
