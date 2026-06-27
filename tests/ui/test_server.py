@@ -64,6 +64,22 @@ def test_demo_context_endpoints_work_end_to_end():
     assert prev.status == 200 and "allowed" in prev.body and prev.body["order"]["source"] == "manual"
 
 
+def test_index_serves_self_contained_html():
+    r = handle_request("GET", "/", None, _ctx())
+    assert r.status == 200 and r.content_type.startswith("text/html")
+    assert isinstance(r.body, str)
+    assert "/api/dashboard" in r.body and "kill-switch" in r.body.lower()
+    assert "://" not in r.body  # fully self-contained: no external CDN / remote resource
+
+
+def test_index_rejects_write_verb():
+    assert handle_request("POST", "/", {}, _ctx()).status == 405
+
+
+def test_json_routes_keep_json_content_type():
+    assert handle_request("GET", "/api/dashboard", None, _ctx()).content_type == "application/json"
+
+
 def test_sse_frame_format():
     frame = dashboard_sse_frame({"equity": 1.0})
     assert frame.startswith("data: ") and frame.endswith("\n\n")
