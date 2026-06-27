@@ -20,8 +20,8 @@ def _local(positions=None, open_order_ids=None):
     return LocalState(positions=positions or {}, open_order_ids=set(open_order_ids or []))
 
 
-def _order(cid, pair, reduce_only=False):
-    return {"clientOrderId": cid, "pair": pair, "reduceOnly": reduce_only}
+def _order(cid, pair, reduce_only=False, amount=0.0):
+    return {"clientOrderId": cid, "pair": pair, "reduceOnly": reduce_only, "amount": amount}
 
 
 def test_adopts_unknown_exchange_position():
@@ -46,7 +46,8 @@ def test_existing_order_not_resubmitted():
     # order "x" is open on BOTH sides → it must NOT be treated as orphan (no double-trade)
     res = reconcile(
         _local(open_order_ids=["x"]),
-        _truth(positions={"BTC/USDT": 1.0}, open_orders=[_order("x", "BTC/USDT", reduce_only=True)]),
+        _truth(positions={"BTC/USDT": 1.0},
+               open_orders=[_order("x", "BTC/USDT", reduce_only=True, amount=1.0)]),
     )
     assert res.orphan_local_order_ids == []
 
@@ -57,12 +58,23 @@ def test_naked_position_flagged():
     assert res.naked_positions == ["BTC/USDT"]
 
 
-def test_position_with_protective_stop_is_not_naked():
+def test_position_fully_covered_is_not_naked():
     res = reconcile(
         _local(),
-        _truth(positions={"BTC/USDT": 1.0}, open_orders=[_order("s1", "BTC/USDT", reduce_only=True)]),
+        _truth(positions={"BTC/USDT": 1.0},
+               open_orders=[_order("s1", "BTC/USDT", reduce_only=True, amount=1.0)]),
     )
     assert res.naked_positions == []
+
+
+def test_partially_covered_position_is_naked():
+    # a stop covering only 0.5 of a 1.0 position leaves 0.5 unprotected → still naked
+    res = reconcile(
+        _local(),
+        _truth(positions={"BTC/USDT": 1.0},
+               open_orders=[_order("s1", "BTC/USDT", reduce_only=True, amount=0.5)]),
+    )
+    assert res.naked_positions == ["BTC/USDT"]
 
 
 def test_non_reduce_only_order_does_not_cover_position():

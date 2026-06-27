@@ -47,8 +47,17 @@ def reconcile(local: LocalState, exchange: ExchangeTruth) -> ReconcileResult:
     exchange_open_ids = {o["clientOrderId"] for o in exchange.open_orders}
     orphans = [oid for oid in local.open_order_ids if oid not in exchange_open_ids]
 
-    covered = {o["pair"] for o in exchange.open_orders if o.get("reduceOnly")}
-    naked = [pair for pair, qty in exchange.positions.items() if qty > 0 and pair not in covered]
+    # sum protective (reduceOnly) order amounts per pair; a position is naked if its quantity
+    # exceeds the covered quantity (a stop covering only PART of the position leaves a remainder
+    # unprotected — §4).
+    covered_qty: dict[str, float] = {}
+    for o in exchange.open_orders:
+        if o.get("reduceOnly"):
+            covered_qty[o["pair"]] = covered_qty.get(o["pair"], 0.0) + float(o.get("amount", 0.0))
+    naked = [
+        pair for pair, qty in exchange.positions.items()
+        if qty > 1e-12 and covered_qty.get(pair, 0.0) + 1e-9 < qty
+    ]
 
     return ReconcileResult(
         positions=positions,

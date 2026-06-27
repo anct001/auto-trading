@@ -76,6 +76,8 @@ def compute_size(
     atr_stop_mult: float = 2.0,
 ) -> SizingResult:
     """Size a new long entry for ``pair`` at ``price``. See module docstring for the model."""
+    if price <= 0:
+        return SizingResult(feasible=False, reason="invalid_price", pair=pair)
     stop_distance = atr_stop_mult * atr
     if atr <= 0 or stop_distance <= 0:
         # without a volatility estimate there is no stop distance and no risk-based size

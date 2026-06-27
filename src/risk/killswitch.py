@@ -34,6 +34,7 @@ class KillSwitch:
     state: KillState = KillState.ARMED
     halt_reason: str = ""
     cancel_resting_entries: bool = False
+    rearmed_by: str = ""
 
     @property
     def is_halted(self) -> bool:
@@ -56,11 +57,18 @@ class KillSwitch:
         """Max-drawdown kill (non-overridable at runtime — §4)."""
         self._trip("drawdown_kill")
 
-    def re_arm(self) -> None:
-        """Explicit human re-enable — the ONLY way back to ARMED."""
+    def re_arm(self, *, operator: str) -> None:
+        """Explicit human re-enable — the ONLY way back to ARMED.
+
+        Requires a non-empty ``operator`` identity so re-arming is a deliberate, auditable act and
+        cannot be triggered by an accidental/automatic no-arg call (a drawdown kill must not be
+        cleared by runtime logic — §4)."""
+        if not operator or not operator.strip():
+            raise ValueError("re_arm requires an operator identity (human re-enable only)")
         self.state = KillState.ARMED
         self.halt_reason = ""
         self.cancel_resting_entries = False
+        self.rearmed_by = operator
 
     def evaluate_dead_mans(
         self,

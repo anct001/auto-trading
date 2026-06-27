@@ -37,6 +37,8 @@ from src.risk.sizing import MarketConstraints, compute_size
 from src.risk.types import Order, PortfolioState, RiskDecision
 from src.strategy.base import INTENT_ENTER_LONG, INTENT_EXIT
 
+_HELD_EPS = 1e-12  # treat a dust-sized residual position as flat (float-safe)
+
 
 @dataclass(frozen=True)
 class TickResult:
@@ -96,9 +98,9 @@ class FastLoop:
         pos = state.positions.get(self.pair)
         held = pos.qty if pos else 0.0
 
-        if intent == INTENT_ENTER_LONG and held == 0.0:
+        if intent == INTENT_ENTER_LONG and held <= _HELD_EPS:
             return self._enter(state, ctx, price, atr_now, client_order_id)
-        if intent == INTENT_EXIT and held > 0.0:
+        if intent == INTENT_EXIT and held > _HELD_EPS:
             return self._exit(state, ctx, price, held, client_order_id)
         return TickResult("hold", intent)
 

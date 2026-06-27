@@ -40,8 +40,19 @@ def test_manual_kill_halts_and_blocks_trading():
 def test_re_arm_clears_halt_only_explicitly():
     ks = killswitch.KillSwitch()
     ks.manual_kill()
-    ks.re_arm()
+    ks.re_arm(operator="ops-alice")
     assert ks.allows_trading()
+    assert ks.rearmed_by == "ops-alice"
+
+
+def test_re_arm_requires_an_operator_identity():
+    import pytest
+
+    ks = killswitch.KillSwitch()
+    ks.trip_drawdown()
+    with pytest.raises(ValueError):
+        ks.re_arm(operator="")  # cannot clear a halt without a named human
+    assert ks.is_halted
 
 
 def test_drawdown_kill_not_cleared_by_runtime_evaluation():

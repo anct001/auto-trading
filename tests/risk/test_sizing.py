@@ -117,6 +117,13 @@ def test_tick_size_floors_price():
     assert math.isclose(res.price, 10000.03, abs_tol=1e-9)
 
 
+def test_non_positive_price_is_infeasible():
+    res = compute_size(
+        pair="BTC/USDT", price=0.0, atr=100.0, state=_state(10000.0), cfg=_cfg(), market=_LOOSE
+    )
+    assert res.feasible is False and res.reason == "invalid_price"
+
+
 def test_zero_or_negative_atr_is_infeasible():
     res = compute_size(
         pair="BTC/USDT", price=10000.0, atr=0.0, state=_state(10000.0), cfg=_cfg(), market=_LOOSE
