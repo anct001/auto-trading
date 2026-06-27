@@ -68,6 +68,55 @@ def _runner(strategy, events, paper, account):
     )
 
 
+class SparseBitbankLike:
+    """Mimics bitbank: a single fetch returns only ~per_call recent candles, but `since`-based
+    pagination can walk the full history (so prewarm can gather enough)."""
+
+    def __init__(self, candles, per_call):
+        self.candles = candles  # full ascending [ts,o,h,l,c,v]
+        self.per_call = per_call
+
+    def fetch_ohlcv(self, symbol, timeframe=None, since=None, limit=None):
+        if since is None:
+            return list(self.candles[-self.per_call:])           # latest "day" only
+        page = [c for c in self.candles if c[0] >= since]
+        return page[: self.per_call]
+
+    def milliseconds(self):
+        return self.candles[-1][0] + HOUR_MS
+
+
+def _sparse_history(n=60):
+    return [[i * HOUR_MS, 10000 + i, 10100 + i, 9900 + i, 10000 + i, 10.0] for i in range(n)]
+
+
+def _sparse_runner(strategy, events, prewarm):
+    return build_runner(
+        data_exchange=SparseBitbankLike(_sparse_history(60), per_call=12),
+        paper_exchange=PaperBrokerExchange(), events=events, strategy=strategy, cfg=_cfg(),
+        costs=_COSTS, market=_MARKET, account=PaperAccount(cash=100000.0), pair=PAIR,
+        timeframe="1h", atr_period=14, limit=50, prewarm=prewarm,
+    )
+
+
+def test_sparse_feed_without_prewarm_is_insufficient(tmp_path):
+    # 12 candles/call < atr_period+2 (16) → the loop can't compute indicators
+    r = _sparse_runner(ScriptStrategy([INTENT_HOLD]), EventLog(tmp_path / "e.jsonl"), prewarm=False)
+    res = r.run_once(now_ms=60 * HOUR_MS)
+    assert res is not None and res.reason == "insufficient_data"
+
+
+def test_prewarm_gathers_enough_history_to_tick(tmp_path):
+    r = _sparse_runner(ScriptStrategy([INTENT_HOLD]), EventLog(tmp_path / "e.jsonl"), prewarm=True)
+    res = r.run_once(now_ms=60 * HOUR_MS)
+    assert res is not None and res.reason != "insufficient_data"  # buffer pre-warmed via pagination
+    assert len(r._buffer) >= 16
+    # a second tick keeps the buffer deduped (doesn't double-count overlapping candles)
+    n1 = len(r._buffer)
+    r.run_once(now_ms=60 * HOUR_MS)
+    assert len(r._buffer) == n1
+
+
 def test_sentiment_state_path_wires_a_provider(tmp_path):
     paper, account = PaperBrokerExchange(), PaperAccount(cash=100000.0)
     events = EventLog(tmp_path / "e.jsonl")

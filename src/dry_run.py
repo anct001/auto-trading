@@ -99,7 +99,7 @@ class PaperAccount:
 class DryRunner:
     def __init__(self, *, data_exchange, loop: FastLoop, account: PaperAccount, costs: Costs,
                  pair: str, timeframe: str, limit: int = 200,
-                 killswitch: KillSwitch | None = None):
+                 killswitch: KillSwitch | None = None, prewarm: bool = True):
         self.data_exchange = data_exchange
         self.loop = loop
         self.account = account
@@ -112,15 +112,53 @@ class DryRunner:
         # serializes paper-account mutations between the loop thread and a UI manual order
         self._lock = threading.Lock()
         self._manual_seq = 0
+        # Rolling candle buffer. Sparse feeds (e.g. bitbank returns ~1 day / ~12-24 1h candles per
+        # call) don't return enough history for the indicators in a single fetch; we pre-warm a
+        # deep buffer once (paginated) and merge the latest candles each tick. Harmless on dense
+        # feeds (they fill the buffer in one call). prewarm=False keeps the old single-fetch path.
+        self.prewarm = prewarm
+        self._buffer = None
+        self._buffer_cap = max(limit, 250)
+
+    def _prewarm_buffer(self, now_ms: int | None):
+        """Gather a deep history buffer once (paginated) so indicators have enough candles."""
+        try:
+            now = int(now_ms) if now_ms is not None else int(self.data_exchange.milliseconds())
+            since = now - self._buffer_cap * feed.timeframe_to_ms(self.timeframe)
+            hist = feed.fetch_ohlcv_history(self.data_exchange, self.pair, self.timeframe,
+                                            since_ms=since, page_limit=self.limit, now_ms=now_ms)
+            return hist if not hist.empty else None
+        except Exception:
+            return None  # fall back to the single-fetch latest window
+
+    def _merge(self, latest):
+        import pandas as pd
+        if self._buffer is None or self._buffer.empty:
+            combined = latest
+        elif latest.empty:
+            combined = self._buffer
+        else:
+            combined = pd.concat([self._buffer, latest], ignore_index=True)
+        combined = combined.drop_duplicates(subset="timestamp", keep="last").sort_values("timestamp")
+        self._buffer = combined.tail(self._buffer_cap).reset_index(drop=True)
+        return self._buffer
+
+    def _window(self, now_ms: int | None):
+        """The candle window for one tick: latest fetch merged into a (pre-warmed) rolling buffer."""
+        latest = feed.fetch_closed_ohlcv(self.data_exchange, self.pair, self.timeframe,
+                                         limit=self.limit, now_ms=now_ms)
+        if not self.prewarm:
+            return latest
+        if self._buffer is None:
+            self._buffer = self._prewarm_buffer(now_ms)
+        return self._merge(latest)
 
     def run_once(self, *, now_ms: int | None = None) -> TickResult | None:
-        """Fetch the latest closed candles, run one tick, and update the paper account."""
+        """Fetch the latest closed candles (merged into the rolling buffer), run one tick."""
         from src.risk import engine
 
-        df = feed.fetch_closed_ohlcv(
-            self.data_exchange, self.pair, self.timeframe, limit=self.limit, now_ms=now_ms
-        )
-        if df.empty:
+        df = self._window(now_ms)
+        if df is None or df.empty:
             return None
         last_close = float(df["close"].iloc[-1])
         self.last_prices[self.pair] = last_close
@@ -210,7 +248,7 @@ def build_runner(*, data_exchange, paper_exchange, events: EventLog, strategy, c
                  costs: Costs, market: MarketConstraints, account: PaperAccount, pair: str,
                  timeframe: str, limit: int = 200, killswitch: KillSwitch | None = None,
                  atr_period: int = 14, atr_stop_mult: float = 2.0,
-                 sentiment_state_path: str | None = None) -> DryRunner:
+                 sentiment_state_path: str | None = None, prewarm: bool = True) -> DryRunner:
     markets = {pair: market}
     # Optional P1 sentiment haircut: read the slow-loop state file each entry (non-blocking, never
     # calls the LLM). Inert unless cfg.sentiment_floor < 1.0 (default 1.0 = off, §6/P1).
@@ -224,7 +262,8 @@ def build_runner(*, data_exchange, paper_exchange, events: EventLog, strategy, c
         atr_period=atr_period, atr_stop_mult=atr_stop_mult, sentiment_provider=sentiment_provider,
     )
     return DryRunner(data_exchange=data_exchange, loop=loop, account=account, costs=costs,
-                     pair=pair, timeframe=timeframe, limit=limit, killswitch=killswitch)
+                     pair=pair, timeframe=timeframe, limit=limit, killswitch=killswitch,
+                     prewarm=prewarm)
 
 
 def main(argv: list[str] | None = None) -> None:
