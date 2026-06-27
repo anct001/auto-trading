@@ -370,7 +370,11 @@ Order-book depth added (`ui/orderbook.py` + `/api/orderbook` + depth panel on `/
 book, live via the view feed's fetch_order_book). Polish pass: CODEBASE_MAP refreshed, dead
 `ui/market`+`ui/orders` empty subpackages removed, cross-page nav links. Final live smoke: all 4
 pages (/ /markets /coin /orders) 200 + all read APIs ok. Full suite **446**, ruff clean.
-**Remaining (UI):** only richer chart pixels (nice-to-have).
+**Live-run fix:** a real test surfaced that bitbank returns only ~12 closed 1h candles per fetch
+(< atr_period+2) so the live loop returned `insufficient_data` every tick. `DryRunner` now keeps a
+rolling buffer, **pre-warmed** once via the paginated feed then merged each tick (prewarm=True
+default). Verified: paper dry-run on REAL bitbank BTC/JPY now ticks (MarketReceived +
+SignalGenerated). **Remaining (UI):** only richer chart pixels (nice-to-have).
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
