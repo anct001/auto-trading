@@ -35,6 +35,7 @@ class OperatorContext:
     coin: Callable[[str], dict] | None = None  # pair -> coin_detail payload
     orders: Callable[[], dict] | None = None   # () -> {"attempts", "submitted", "fills"}
     place: Callable[[dict], dict] | None = None  # body -> place a manual order (Inv 9); None = disabled
+    orderbook: Callable[[str], dict] | None = None  # pair -> order-book depth view
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,12 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
             return Response(405, {"error": "read-only endpoint"})
         pair = (query.get("pair") or [""])[0]
         return Response(200, ctx.coin(pair) if ctx.coin else {})
+
+    if path == "/api/orderbook":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        pair = (query.get("pair") or [""])[0]
+        return Response(200, ctx.orderbook(pair) if ctx.orderbook else {})
 
     if path == "/orders":
         if method != "GET":
@@ -229,9 +236,19 @@ def coin_detail_html() -> str:
 <h1>Coin detail: <span id="pair"></span> <a href="/markets">· markets</a> <a href="/">· dashboard</a></h1>
 <div id="ro" class="lbl"></div>
 <svg id="chart" viewBox="0 0 900 360" width="100%" height="360"></svg>
+<h2 class="lbl" style="margin-top:14px">Order book <span id="spread"></span></h2>
+<table id="ob" style="width:auto;border-collapse:collapse"><tbody></tbody></table>
 <script>
 const params=new URLSearchParams(location.search);const pair=params.get("pair")||"BTC/JPY";
 document.getElementById("pair").textContent=pair;
+const fmtn=(n)=>n==null?"—":n.toLocaleString(undefined,{maximumFractionDigits:6});
+async function drawBook(){
+ try{const b=await (await fetch("/api/orderbook?pair="+encodeURIComponent(pair))).json();
+  document.getElementById("spread").textContent=b.mid==null?"":`· mid ${fmtn(b.mid)} · spread ${fmtn(b.spread_pct)}%`;
+  const asks=(b.asks||[]).slice().reverse(),bids=b.bids||[];
+  const row=(side,r)=>`<tr><td style="color:${side==='ask'?'#f06a6a':'#46d17f'};padding:2px 12px;text-align:right">${fmtn(r.price)}</td><td style="padding:2px 12px;text-align:right;color:#8b93a1">${fmtn(r.amount)}</td><td style="padding:2px 12px;text-align:right;color:#6b7280">${fmtn(r.cum)}</td></tr>`;
+  document.querySelector("#ob tbody").innerHTML=asks.map(r=>row("ask",r)).join("")+bids.map(r=>row("bid",r)).join("")||"<tr><td class=lbl>no book</td></tr>";
+ }catch(e){}}
 const NS="http://www.w3.org/2000/svg";
 function line(pts,color){const p=document.createElementNS(NS,"polyline");p.setAttribute("points",pts);
  p.setAttribute("fill","none");p.setAttribute("stroke",color);p.setAttribute("stroke-width","1.2");return p;}
@@ -255,7 +272,7 @@ async function draw(){
   `<span>close ${r.close?.toFixed?.(2)}</span><span>EMA fast(orange)/slow(blue)</span>`+
   `<span>ATR% ${r.atr_pct?.toFixed?.(3)}</span><span>trend ${r.ema_fast_above_slow?'▲':'▽'}</span>`;
 }
-draw();setInterval(draw,5000);
+draw();setInterval(draw,5000);drawBook();setInterval(drawBook,5000);
 </script></body></html>"""
 
 
@@ -399,6 +416,13 @@ def build_demo_context() -> OperatorContext:
         name = p if p in uni else next(iter(uni))
         return build_coin_detail(name, uni[name])
 
+    def _orderbook(p: str) -> dict:
+        from src.ui.orderbook import build_orderbook_view
+        mid = price
+        book = {"bids": [[mid - i * 1000, 0.5 + i * 0.2] for i in range(1, 11)],
+                "asks": [[mid + i * 1000, 0.5 + i * 0.2] for i in range(1, 11)]}
+        return build_orderbook_view(book)
+
     def _orders() -> dict:
         from src.events.log import Event
         from src.ui.orders_panel import build_order_trade_panel
@@ -422,6 +446,7 @@ def build_demo_context() -> OperatorContext:
         markets=_markets,
         coin=_coin,
         orders=_orders,
+        orderbook=_orderbook,
     )
 
 

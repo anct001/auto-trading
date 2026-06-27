@@ -53,6 +53,15 @@ def build_live_context(runner) -> OperatorContext:
         from src.ui.orders_panel import build_order_trade_panel
         return build_order_trade_panel(runner.loop.events.read_all())
 
+    def _orderbook(p: str) -> dict:
+        # read-only depth from the (view) data feed; fail-soft so the UI never breaks on a feed hiccup
+        from src.ui.orderbook import build_orderbook_view
+        try:
+            raw = runner.data_exchange.fetch_order_book(p or runner.pair)
+        except Exception:
+            return build_orderbook_view({})
+        return build_orderbook_view(raw)
+
     def _place(body: dict) -> dict:
         # the one UI write to the trading path: a MANUAL paper order through the same risk engine
         # + broker as the bot (Inv 3/9), serialized with the loop via the runner lock.
@@ -65,4 +74,4 @@ def build_live_context(runner) -> OperatorContext:
         )
 
     return OperatorContext(dashboard=_dashboard, preview=_preview, killswitch=runner.killswitch,
-                           orders=_orders, place=_place)
+                           orders=_orders, place=_place, orderbook=_orderbook)

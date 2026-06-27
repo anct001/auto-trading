@@ -167,6 +167,21 @@ def test_order_place_rejects_get():
     assert handle_request("GET", "/api/order", None, ctx).status == 405
 
 
+def test_orderbook_api_uses_query_pair():
+    ctx = _ctx()
+    ctx.orderbook = lambda pair: {"pair": pair, "bids": [], "asks": [], "mid": None}
+    r = handle_request("GET", "/api/orderbook?pair=ETH%2FJPY", None, ctx)
+    assert r.status == 200 and r.body["pair"] == "ETH/JPY"
+    assert handle_request("GET", "/api/orderbook?pair=X", None, _ctx()).body == {}
+
+
+def test_demo_orderbook_provider_has_depth():
+    from src.ui.server import build_demo_context
+    b = build_demo_context().orderbook("BTC/JPY")
+    assert b["best_bid"] < b["best_ask"] and b["mid"] > 0
+    assert b["bids"][-1]["cum"] > b["bids"][0]["cum"]  # cumulative grows
+
+
 def test_sse_frame_format():
     frame = dashboard_sse_frame({"equity": 1.0})
     assert frame.startswith("data: ") and frame.endswith("\n\n")
