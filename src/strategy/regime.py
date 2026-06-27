@@ -11,8 +11,10 @@ stale, or unknown-pair regime → enabled, so the fast loop runs correctly witho
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
 ANY_REGIME = "any"
 
@@ -48,3 +50,32 @@ def is_strategy_enabled(
     if current is None:
         return True
     return current == target_regime
+
+
+def write_regime_state(path: str | Path, state: RegimeState) -> None:
+    """Write regime_state.json (slow loop / tests). Human-auditable ISO timestamp."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "schema_version": state.schema_version,
+        "generated_at": state.generated_at.isoformat(),
+        "ttl_seconds": state.ttl_seconds,
+        "regimes": dict(state.regimes),
+    }, indent=2) + "\n", encoding="utf-8")
+
+
+def load_regime_state(path: str | Path) -> RegimeState | None:
+    """Load regime_state.json, or None on ANY problem (fail-to-neutral; never crash the loop)."""
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        return RegimeState(
+            schema_version=int(raw["schema_version"]),
+            generated_at=datetime.fromisoformat(raw["generated_at"]),
+            ttl_seconds=float(raw["ttl_seconds"]),
+            regimes={str(k): str(v) for k, v in dict(raw["regimes"]).items()},
+        )
+    except (KeyError, ValueError, TypeError, OSError):
+        return None
