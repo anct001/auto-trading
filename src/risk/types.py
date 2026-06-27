@@ -84,11 +84,17 @@ class PortfolioState:
 
 @dataclass(frozen=True)
 class RiskDecision:
-    """The engine's verdict. ``approved`` orders carry the sized order; rejections carry reasons."""
+    """The engine's verdict. ``approved`` orders carry the sized order; rejections carry reasons.
+
+    ``approval`` is an unforgeable capability that ONLY ``risk.engine`` can mint (see
+    engine.Approval). The broker requires it, so an order cannot reach the exchange via a
+    hand-built ``approved=True`` decision — closing the Invariant-3 backdoor. ``approve()`` below
+    is for inspection/tests only and yields no capability (the broker will refuse it)."""
 
     approved: bool
     reasons: tuple[str, ...] = ()
     sized: Order | None = None
+    approval: object | None = None  # engine.Approval capability; None ⇒ not engine-approved
 
     @classmethod
     def reject(cls, *reasons: str) -> "RiskDecision":
@@ -96,4 +102,5 @@ class RiskDecision:
 
     @classmethod
     def approve(cls, order: Order) -> "RiskDecision":
+        """Inspection-only approval (no capability — the broker refuses it)."""
         return cls(approved=True, reasons=(), sized=order)

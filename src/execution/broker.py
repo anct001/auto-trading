@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from src.risk.engine import is_engine_approved
 from src.risk.sizing import MarketConstraints, floor_to_step
 from src.risk.types import RiskDecision
 
@@ -51,8 +52,10 @@ class Broker:
         tif: str = "GTC",
     ) -> SubmitResult:
         """Submit an approved order. Raises on an unapproved decision; idempotent per id."""
-        if not decision.approved or decision.sized is None:
-            raise ValueError("broker refuses to submit an unapproved order (Invariant 3)")
+        # only the engine can mint the approval capability — a hand-built approved=True decision
+        # is refused, closing the Invariant-3/9 backdoor.
+        if not decision.approved or decision.sized is None or not is_engine_approved(decision):
+            raise ValueError("broker refuses to submit a non-engine-approved order (Invariant 3)")
 
         # idempotency: a repeated client order id never reaches the exchange twice (§9)
         if client_order_id in self._submitted:

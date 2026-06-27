@@ -43,6 +43,37 @@ class RiskContext:
     market: MarketConstraints | None = None
 
 
+# An unforgeable approval capability. Only this module holds _MINT, so only validate() can build
+# an Approval — the broker checks for it, closing the "hand-built approved decision" backdoor
+# (Inv. 3/9). (Python has no hard private, but minting requires reaching into engine internals,
+# which makes any bypass deliberate and greppable, not accidental.)
+_MINT = object()
+
+
+class Approval:
+    __slots__ = ("order", "_mint")
+
+    def __init__(self, order: Order, mint: object):
+        if mint is not _MINT:
+            raise TypeError("Approval can only be minted by risk.engine.validate")
+        self.order = order
+        self._mint = mint
+
+
+def is_engine_approved(decision: RiskDecision) -> bool:
+    """True only if ``decision`` carries an engine-minted Approval for its sized order."""
+    approval = decision.approval
+    return (
+        isinstance(approval, Approval)
+        and getattr(approval, "_mint", None) is _MINT
+        and approval.order is decision.sized
+    )
+
+
+def _approve(order: Order) -> RiskDecision:
+    return RiskDecision(approved=True, reasons=(), sized=order, approval=Approval(order, _MINT))
+
+
 def validate(
     order: Order, state: PortfolioState, cfg: RiskConfig, ctx: RiskContext
 ) -> RiskDecision:
@@ -60,7 +91,7 @@ def _validate_exit(order: Order, state: PortfolioState) -> RiskDecision:
     if order.qty > held + _QTY_EPS:
         # selling more than held would open a short — forbidden, spot-only (§0)
         return RiskDecision.reject("would_short")
-    return RiskDecision.approve(order)
+    return _approve(order)
 
 
 def _validate_entry(
@@ -108,7 +139,7 @@ def _validate_entry(
 
     if reasons:
         return RiskDecision.reject(*reasons)
-    return RiskDecision.approve(order)
+    return _approve(order)
 
 
 def _feasibility_reason(order: Order, market: MarketConstraints) -> str | None:
