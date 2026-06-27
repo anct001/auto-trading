@@ -108,8 +108,10 @@ python scripts/dryrun_parity.py --exchange bitbank --pair BTC/JPY --days 30
 4. **P3 (monitor/orchestrate) — deterministic cores BUILT & tested.** `strategy/shadow.py`
    (`ShadowBook`), `ui/preview.py` (`preview_manual_order`, runs the exact engine — Inv 9),
    `ui/dashboard/model.py` (`build_dashboard`, read-only §12 view). Remaining: **(a) UI delivery**
-   — **DONE for the logic side**: `ui/server.py` (stdlib HTTP transport, `python -m src.ui.server`),
-   `ui/screener.py`, `ui/agent_view.py`. Only the market chart/heatmap **pixels** (HTML/JS) remain; **(b) the gate
+   — **control dashboard DONE end-to-end**: `ui/server.py` (stdlib HTTP transport + `index_html()`
+   page at `GET /`, `python -m src.ui.server`), `ui/screener.py`, `ui/agent_view.py`. Only the
+   richer *market* surfaces (watchlist/coin-detail K-line/heatmap pixels, need a multi-asset feed)
+   remain; **(b) the gate
    itself (operational)** — a **≥30-day continuous dry-run** on bitbank BTC/JPY (no crash),
    `dryrun_parity` green, and **restart-safety** verified (kill mid-trade → clean reconcile, no
    double-trade, §9). Then reintroduce Freqtrade for dry-run fill parity.

@@ -340,9 +340,13 @@ w/o operator. `dashboard_sse_frame` for SSE; `serve()` + `build_demo_context()` 
 engage halt). Then added `ui/screener.py` (§12 research screener — condition filter over EMA/ATR
 readouts; never trades) and `ui/agent_view.py` (§12 agent-view overlay — per-coin "why acting/not":
 signal, regime, sentiment haircut, position, kill-switch; reuses the loop's exact predicates).
-Full suite **376→396**, ruff clean. **Remaining (UI):** only the market chart/heatmap **pixels**
-(HTML/JS front-end). **Remaining (gate, operational):** ≥30-day dry-run on bitbank + parity + §9
-restart-safety.
+Then `index_html()` — a self-contained operator **control dashboard page** (no CDN) served at
+`GET /` by the stdlib transport: equity, P&L vs daily limits, drawdown vs kill-switch, exposure,
+positions, decision log, + kill-switch engage/re-arm controls (live smoke: 200 text/html).
+Full suite **376→399**, ruff clean. The §12 **control dashboard is now end-to-end viewable**.
+**Remaining (UI):** only the richer *market* surfaces — watchlist/coin-detail K-line/heatmap
+pixels (need a multi-asset live feed). **Remaining (gate, operational):** ≥30-day dry-run on
+bitbank + parity + §9 restart-safety.
 
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
