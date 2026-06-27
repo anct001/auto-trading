@@ -64,7 +64,7 @@ def test_risk_sized_qty_matches_compute_size():
     atr_at_entry = float(atr_fn(df, 3).iloc[entry_bar])
     expected = compute_size(
         pair="BTC/USDT", price=float(df["open"].iloc[entry_bar]), atr=atr_at_entry,
-        state=PortfolioState(equity=10000.0, peak_equity=10000.0, day_start_equity=10000.0),
+        state=PortfolioState(equity=10000.0, peak_equity=10000.0, day_start_equity=10000.0, quote_price=1.0),
         cfg=_cfg(), market=_MARKET, atr_stop_mult=2.0,
     )
     assert len(res.trades) == 1

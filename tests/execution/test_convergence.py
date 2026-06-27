@@ -45,7 +45,7 @@ class FakeExchange:
 
 
 def _state():
-    return PortfolioState(equity=10000.0, peak_equity=10000.0, day_start_equity=10000.0)
+    return PortfolioState(equity=10000.0, peak_equity=10000.0, day_start_equity=10000.0, quote_price=1.0)
 
 
 def _ctx(ks=None):

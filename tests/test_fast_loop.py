@@ -86,7 +86,7 @@ def _loop(exchange, events, strategy):
 
 def _state(positions=None):
     return PortfolioState(equity=10000.0, peak_equity=10000.0, day_start_equity=10000.0,
-                          positions=positions or {})
+                          quote_price=1.0, positions=positions or {})
 
 
 def _ctx(ks=None):

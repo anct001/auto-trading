@@ -52,7 +52,7 @@ def test_position_value():
 # ---- PortfolioState --------------------------------------------------------------------------
 
 def test_portfolio_drawdown_and_day_return():
-    state = PortfolioState(equity=90.0, peak_equity=100.0, day_start_equity=100.0)
+    state = PortfolioState(equity=90.0, peak_equity=100.0, day_start_equity=100.0, quote_price=1.0)
     assert math.isclose(state.drawdown(), -0.10)
     assert math.isclose(state.day_return(), -0.10)
 
@@ -62,6 +62,7 @@ def test_portfolio_total_position_value():
         equity=1000.0,
         peak_equity=1000.0,
         day_start_equity=1000.0,
+        quote_price=1.0,
         positions={"BTC/USDT": Position("BTC/USDT", 1.0, 100.0)},
     )
     assert math.isclose(state.total_position_value({"BTC/USDT": 120.0}), 120.0)
@@ -69,7 +70,7 @@ def test_portfolio_total_position_value():
 
 @pytest.mark.parametrize("kwargs", [{"equity": 0.0}, {"peak_equity": -1.0}, {"day_start_equity": 0.0}])
 def test_portfolio_rejects_nonpositive(kwargs):
-    base = {"equity": 100.0, "peak_equity": 100.0, "day_start_equity": 100.0}
+    base = {"equity": 100.0, "peak_equity": 100.0, "day_start_equity": 100.0, "quote_price": 1.0}
     base.update(kwargs)
     with pytest.raises(ValueError):
         PortfolioState(**base)

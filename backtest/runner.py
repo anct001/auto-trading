@@ -122,7 +122,8 @@ def run_backtest(
             atr_i = atr_series[i]
             if not (atr_i > 0):  # NaN warmup or zero vol → no risk-based size
                 return
-            state = PortfolioState(equity=cash, peak_equity=cash, day_start_equity=cash)
+            state = PortfolioState(equity=cash, peak_equity=cash, day_start_equity=cash,
+                                   quote_price=1.0)
             sized = compute_size(
                 pair=risk.pair, price=opens[i], atr=atr_i, state=state,
                 cfg=risk.cfg, market=risk.market, atr_stop_mult=risk.atr_stop_mult,

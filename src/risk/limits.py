@@ -77,10 +77,13 @@ def check_drawdown(state: PortfolioState, cfg: RiskConfig) -> CheckResult:
     return _OK
 
 
-def _corr(correlations: dict[tuple[str, str], float], a: str, b: str) -> float:
+def _corr(correlations: dict[tuple[str, str], float], a: str, b: str) -> float | None:
+    """Pairwise correlation, or None if unknown. Same pair is perfectly correlated."""
     if a == b:
         return 1.0
-    return correlations.get((a, b), correlations.get((b, a), 0.0))
+    if (a, b) in correlations:
+        return correlations[(a, b)]
+    return correlations.get((b, a))  # None if absent
 
 
 def check_correlation_cluster(
@@ -91,10 +94,15 @@ def check_correlation_cluster(
     correlations: dict[tuple[str, str], float],
 ) -> CheckResult:
     """Sum the order with every position correlated > threshold (and the same pair) as one
-    cluster; cap the cluster's exposure at cluster_exposure_cap_pct of equity."""
+    cluster; cap the cluster's exposure at cluster_exposure_cap_pct of equity.
+
+    **Fail-closed:** a position whose correlation with the order's pair is *unknown* is assumed
+    correlated and included in the cluster — missing data is the dangerous case (several alts, no
+    correlation feed, all silently passing), so we treat it conservatively (§4)."""
     cluster_value = order.notional
     for pair, pos in state.positions.items():
-        if _corr(correlations, order.pair, pair) > cfg.cluster_corr_threshold:
+        corr = _corr(correlations, order.pair, pair)
+        if corr is None or corr > cfg.cluster_corr_threshold:
             cluster_value += pos.value(prices[pair])
     cap = cfg.cluster_exposure_cap_pct / 100.0 * state.equity
     return _OK if cluster_value <= cap else CheckResult(False, "correlation_cluster_cap")

@@ -36,7 +36,7 @@ def _pos(pair, value):
 def _state(equity, positions=None, peak=None, day_start=None):
     return PortfolioState(
         equity=equity, peak_equity=peak or equity,
-        day_start_equity=day_start or equity, positions=positions or {},
+        day_start_equity=day_start or equity, positions=positions or {}, quote_price=1.0,
     )
 
 
@@ -117,6 +117,15 @@ def test_correlated_cluster_summed_breaches_cap_even_when_each_under_per_asset()
     prices = _prices("ETH/USDT", "SOL/USDT")
     corr = {("ETH/USDT", "SOL/USDT"): 0.8}
     res = limits.check_correlation_cluster(_order("SOL/USDT", 250.0), state, _cfg(), prices, corr)
+    assert not res.ok and res.reason == "correlation_cluster_cap"
+
+
+def test_unknown_correlation_fails_closed():
+    # missing correlation data must NOT be treated as "uncorrelated" — assume correlated (§4)
+    state = _state(1000.0, {"ETH/USDT": _pos("ETH/USDT", 250.0), "ADA/USDT": _pos("ADA/USDT", 250.0)})
+    prices = _prices("ETH/USDT", "ADA/USDT", "SOL/USDT")
+    res = limits.check_correlation_cluster(_order("SOL/USDT", 250.0), state, _cfg(), prices, {})
+    # cluster = 250 (order) + 250 + 250 = 750 = 75% > 40% cap → must reject
     assert not res.ok and res.reason == "correlation_cluster_cap"
 
 

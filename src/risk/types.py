@@ -59,8 +59,10 @@ class PortfolioState:
     equity: float
     peak_equity: float
     day_start_equity: float
+    # REQUIRED (no default): the de-peg guard (§4) is blind without a real quote price. Forcing
+    # callers to supply it prevents a silent fail-open where a stale/assumed $1 hides a de-peg.
+    quote_price: float  # USDT/USDC vs $1
     positions: dict[str, Position] = field(default_factory=dict)
-    quote_price: float = 1.0  # USDT/USDC vs $1 (de-peg guard, §4)
     realized_day_pnl: float = 0.0
 
     def __post_init__(self) -> None:

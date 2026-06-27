@@ -38,7 +38,7 @@ def _cfg(**over):
 
 
 def _state(equity):
-    return PortfolioState(equity=equity, peak_equity=equity, day_start_equity=equity)
+    return PortfolioState(equity=equity, peak_equity=equity, day_start_equity=equity, quote_price=1.0)
 
 
 # generous constraints unless a test overrides them
