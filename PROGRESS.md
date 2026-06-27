@@ -277,24 +277,36 @@ wrote HANDOFF — **can reach Binance/Bybit/OKX, no HTTP 451**).
   the live rolling-window decision over real history vs. the full-series backtest. Bybit 1y 1h:
   **8557/8557 candles match (rate=1.0000)** → no train-serve skew. Full suite **261 passed**.
 
+### 2026-06-27 (local session, cont.) — trading venue pinned: bitbank BTC/JPY (ADR 0002 amended)
+Operator chose "adapt to a JFSA venue." Probed all four ccxt JFSA venues: **bitbank is the only
+one with OHLCV support** (bitflyer/coincheck/zaif return no candles via ccxt). bitbank lists
+**BTC/JPY** (active), published spot fees **maker 0.00% / taker 0.10%** (from ccxt market meta).
+- **Config switched + re-locked:** `ema_cross.json` venue=bitbank, pairs=["BTC/JPY"];
+  `costs.json` = bitbank fees (was binance_japan VIP0+BNB 0.075%); `.env.example`
+  TRADING_EXCHANGE_ID=bitbank; `config.lock.json` regenerated. `first_real_backtest.py` docstring
+  clarifies data(Bybit, deep)-vs-venue(bitbank) split. ADR 0002 amended with the decision.
+- **Proven on the real venue (bitbank BTC/JPY):** `dry_run.py` paper tick OK; `dryrun_parity.py`
+  **519/519 (rate=1.0000)** on 30d of bitbank 1h. bitbank serves 1h one-day-per-call (deep pull =
+  many calls); no public sandbox (paper/dry-run until P4). Full suite **261 passed**, ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.
-- **Operational (not code):** the real P0 close — pin venue (ccxt has no Binance Japan; see ADR
-  0002) + real fee tier (§8.3) + a live ≥30-day forward dry-run, then `dryrun_parity` on its
-  event log. The whole code path (data → quality → backtest → walk-forward → signal parity) is
-  now proven on real multi-regime data; only the venue binding + live forward run remain.
+- **Operational (not code):** the real P0 close — venue now pinned (bitbank); remaining is the
+  operator's account: confirm bitbank KYC + ToS for API/bot spot trading (§11), confirm the live
+  fee schedule (§8.3), then a live **≥30-day forward dry-run** on bitbank BTC/JPY and run
+  `dryrun_parity` on its event log. The whole code path is proven on real data + the real venue.
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 
 | Item | Status | Decision |
 |------|--------|----------|
-| Exchange entity | ✅ decided | **Trade = Binance Japan**; **view = Binance Global** (read-only, operator UI only). See ADR 0002. |
-| Target pairs | ✅ decided (1 caveat) | **BTC/USDT**. ⚠️ UNVERIFIED: confirm it's listed on Binance Japan when wiring ccxt (Japan quotes mainly in JPY); fallback **BTC/JPY**. |
+| Exchange entity | ✅ decided (amended 2026-06-27) | **Trade = bitbank** (JFSA); **view = Binance Global** (read-only). See ADR 0002 + Amendment. |
+| Target pairs | ✅ decided | **BTC/JPY** (bitbank's primary BTC quote; confirmed active via ccxt). StaticPairlist for reproducibility. |
 | Timeframe | ✅ decided | **1h**. |
-| Actual fee tier | ⛔ pending | VIP level / BNB & maker-taker discounts — wrong tier biases the backtest (§8.3). Needed before the backtest harness slice, not before the data slice. |
-| Operator KYC / ToS | ⛔ operator to verify | Confirm eligibility on Binance Japan + that its ToS permits API/bot spot trading (§11). |
-| Exact ccxt id/endpoint for the JP entity | ⚠️ probed 2026-06-27 | **ccxt 4.5.60 has NO Binance Japan entity** (`binance`→Global, plus `binanceus`/futures). JFSA venues in ccxt: bitbank/bitflyer/coincheck/zaif. Operator must pick a venue before P4 — see ADR 0002 "Findings". Doesn't block P0 (pipeline is venue-agnostic). |
+| Actual fee tier | ✅ set (operator to confirm) | bitbank published spot: **maker 0.00% / taker 0.10%** (ccxt market meta). In `costs.json`, re-locked. Operator confirms current schedule/rebate campaign before real capital (§8.3). |
+| Operator KYC / ToS | ⛔ operator to verify | Confirm bitbank KYC + that its ToS permits API/bot spot trading (§11). |
+| ccxt id/endpoint | ✅ resolved | **`bitbank`** (present in ccxt 4.5.60, OHLCV supported). No public sandbox → paper/dry-run until P4. |
 
 ## Next slice (P0, first work item)
 

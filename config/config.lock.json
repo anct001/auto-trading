@@ -1,5 +1,5 @@
 {
-  "config/backtest/costs.json": "31d7cc23f2f80e76011aeca67a9f8318daa5dde5ea87214e05cb51bd24721857",
+  "config/backtest/costs.json": "e2517a64c183f0a2236ce0d7c06817da3e3e6f0fd61c0405ae18aa165fd282e6",
   "config/risk/default.json": "e146f337ac1b270201222dd1574d8e557bc58ac60d9d7de68a13c9033c7f2f0c",
-  "config/strategy/ema_cross.json": "7356c3834cae7d5ebe38ecc60f5eb9336c40e69e4a35b3051b74fc1f1fa72181"
+  "config/strategy/ema_cross.json": "94395106e74d07b42ec70dd4c17154de874be5e316d2c93244e8106aa5e963fe"
 }

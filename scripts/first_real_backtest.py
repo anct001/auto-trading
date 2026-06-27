@@ -5,14 +5,14 @@ Pulls real BTC/USDT 1h candles, runs them through the full P0 pipeline
 (feed → quality gate → single feature path → dumb strategy → risk-sized backtest →
 walk-forward/metrics), and proves the stored data backtests reproducibly (§8.8).
 
-PROVISIONAL DATA SOURCE: the trading venue is Binance Japan (ADR 0002). For harness validation
-we use a deep-history public venue ONLY to exercise the pipeline on real, multi-regime market
-data — never the Binance Global entity (ADR 0002 keeps Global data out of any signal path), and
-never as an edge claim. Bybit serves multi-year 1h BTC/USDT via paginated fetch; Kraken's public
-OHLC caps at ~720 recent candles, too few for the ≥100-trade gate. The cost model is our Binance
-VIP0+BNB config and does NOT reflect this venue's fees. Closing the P0 DONE-GATE for real still
-requires running on the operator's actual venue (Binance Japan), with a ≥100-trade multi-regime
-sample and a ≥30-day forward dry-run.
+DATA SOURCE vs TRADING VENUE: the trading venue is **bitbank** (ADR 0002 amended) with pair
+BTC/JPY. But bitbank serves 1h OHLCV one calendar day per call, so a multi-year ≥100-trade sample
+is hundreds of rate-limited calls. For the *sample-size / walk-forward* harness validation we
+therefore use a deep-history public venue (**Bybit**) ONLY to exercise the pipeline on real,
+multi-regime data — never the Binance Global entity (ADR 0002 keeps Global out of any signal
+path), and never as an edge claim. The cost model (config/backtest/costs.json) IS bitbank's
+published spot fees. The venue-accurate run (bitbank BTC/JPY data + a ≥30-day forward dry-run +
+`scripts/dryrun_parity.py`) is the real P0 close and is the operator's to run on their account.
 """
 from __future__ import annotations
 

@@ -8,8 +8,8 @@
   },
   "timeframe": "1h",
   "target_regime": "trend",
-  "trading_venue": "binance_japan",
-  "_venue_note": "Trading venue = Binance Japan only (ADR 0002, §10/§11). Pairs must be JFSA-listed on the Japan entity. Binance Global is viewing-only and never feeds this strategy.",
-  "pairs": ["BTC/USDT"],
-  "_pairs_note": "Chosen at ORIENT: BTC/USDT, 1h. StaticPairlist for reproducibility (§8.8). UNVERIFIED dependency: confirm BTC/USDT is listed on Binance Japan when wiring ccxt (§10) — Japan's primary quote is JPY; if absent, fall back to BTC/JPY. Fee tier still pending (needed for the backtest slice, §8.3)."
+  "trading_venue": "bitbank",
+  "_venue_note": "Trading venue = bitbank (JFSA-registered, ADR 0002 + Findings). Chosen 2026-06-27: ccxt has no Binance Japan entity, and bitbank is the only ccxt JFSA venue with OHLCV support. Binance Global remains viewing-only and never feeds this strategy.",
+  "pairs": ["BTC/JPY"],
+  "_pairs_note": "ORIENT: BTC/JPY, 1h (bitbank's primary BTC quote is JPY; confirmed listed+active via ccxt). StaticPairlist for reproducibility (§8.8). Fees from bitbank's published spot schedule (config/backtest/costs.json); operator confirms their tier before real capital (§8.3/§14)."
 }

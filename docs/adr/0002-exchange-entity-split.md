@@ -1,7 +1,7 @@
-# ADR 0002 — Exchange entity: Binance Japan for trading, Binance Global for viewing only
+# ADR 0002 — Exchange entity: bitbank for trading, Binance Global for viewing only
 
-- **Status:** Accepted
-- **Date:** 2026-06-26
+- **Status:** Accepted — **trading venue amended 2026-06-27 (Binance Japan → bitbank); see Amendment**
+- **Date:** 2026-06-26 (amended 2026-06-27)
 - **Relates to:** MASTER_DRIVER §10 (exchange connection & secrets), §11 (jurisdiction), §12
   (operator-facing market surfaces), §2/§8 (data layer & reproducibility)
 
@@ -74,3 +74,31 @@ unified client. Options, none chosen here (do not invent):
      today) — it proves the pipeline, not the venue. The venue must be pinned before P4.
 
 This does **not** block the rest of P0 (pipeline is venue-agnostic); it blocks P4 go-live.
+
+## Amendment (2026-06-27) — trading venue = bitbank (Option 2 chosen)
+
+**Decision:** the trading venue is changed from Binance Japan to **bitbank**. The rest of this
+ADR stands unchanged: the *viewing* venue remains Binance Global (read-only, §12), and the hard
+boundary — **viewing data must never reach `risk/engine` or any signal path** — is unchanged.
+
+**Why bitbank.** Of the JFSA-registered, ccxt-supported venues, bitbank is the **only one with
+OHLCV support** in ccxt 4.5.60 (`fetchOHLCV=True`); bitflyer/coincheck/zaif return no candles
+through the unified client, which would force a second, non-reproducible data source for the
+backtest. bitbank lists **BTC/JPY** (active) with published spot fees **maker 0.00% / taker
+0.10%** (read from ccxt market metadata). It is reachable from the operator's machine.
+
+**Consequences / what changed in the repo:**
+- Pair is **BTC/JPY** (bitbank's primary BTC quote), not BTC/USDT. `config/strategy/ema_cross.json`
+  updated; `config/backtest/costs.json` set to bitbank's published fees; both re-locked
+  (`config/config.lock.json`). `.env.example` `TRADING_EXCHANGE_ID=bitbank`.
+- **Proven end-to-end on bitbank BTC/JPY (2026-06-27):** `dry_run.py` runs the paper order path;
+  `dryrun_parity.py` shows signal parity **519/519 (rate 1.0000)** on 30 days of bitbank 1h data.
+- **bitbank OHLCV is served one calendar day per call** (~18–24 rows). The paginated fetch
+  (`feed.fetch_ohlcv_history`) handles this, but a deep (multi-year) pull is many rate-limited
+  calls; the deep-history *sample-size* validation still uses a public deep-history venue (Bybit)
+  — that proves the pipeline, while bitbank data + bitbank fees drive the venue-accurate run.
+- **bitbank has no public sandbox/testnet.** P0–P3 stay on the paper/dry-run path
+  (`PaperBrokerExchange`); real keys touch bitbank only at P4 after the §14 checklist.
+
+**Still operator-owned before P4:** confirm bitbank KYC + that bitbank's ToS permits API/bot spot
+trading (§11), and confirm the actual fee schedule/any maker-rebate campaign (§8.3).

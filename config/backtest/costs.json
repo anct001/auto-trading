@@ -1,11 +1,11 @@
 {
-  "_comment": "Backtest cost model (§8.3). HASH-LOCKED declarative config (§15). Zero/wrong cost = invalid backtest. Set at ORIENT: Binance spot VIP 0 WITH BNB discount (25% off). Fees are fractions (0.00075 = 0.075%). Adjust if the operator's tier/BNB usage changes.",
+  "_comment": "Backtest cost model (§8.3). HASH-LOCKED declarative config (§15). Zero/wrong cost = invalid backtest. Set at ORIENT to the trading venue's published spot fees. Fees are fractions (0.001 = 0.10%). Re-lock (config.lock.json) after any change.",
   "schema_version": 1,
-  "venue": "binance_japan",
-  "fee_tier": "VIP0",
-  "bnb_discount": true,
-  "maker_fee": 0.00075,
-  "taker_fee": 0.00075,
+  "venue": "bitbank",
+  "fee_tier": "standard_spot",
+  "maker_fee": 0.0,
+  "taker_fee": 0.001,
   "slippage": 0.0005,
-  "_notes": "VIP0 spot = 0.10% base; with BNB 25% off → 0.075% maker / 0.075% taker. Slippage 0.05%/fill is a starting assumption for BTC/USDT 1h; revisit with the capacity check (§5) before any size increase. NOTE: BNB-paid fees still net the same after-tax line in §11 — model BNB price risk separately if BNB is held as inventory."
+  "_notes": "bitbank spot published fees (confirmed via ccxt market metadata 2026-06-27): maker 0.00%, taker 0.10% for BTC/JPY. NOTE: bitbank runs periodic maker-rebate campaigns (maker can be negative, e.g. -0.02%) — modeled conservatively as 0.00% maker; do NOT assume a rebate. OPERATOR: confirm your current fee schedule before any real capital (§8.3/§14). Slippage 0.05%/fill is a starting assumption for BTC/JPY 1h; revisit with the capacity check (§5) before any size increase.",
+  "_history": "Was binance_japan VIP0+BNB 0.075% until 2026-06-27; switched to bitbank because ccxt has no Binance Japan entity (ADR 0002 Findings)."
 }

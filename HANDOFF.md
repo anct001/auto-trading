@@ -26,10 +26,12 @@
 
 ## Decisions locked this session (don't re-litigate)
 
-- **Exchange entity (ADR 0002):** trade on **Binance Japan**; use **Binance Global** public data
-  for *viewing only* — Global data must never reach a signal/order path.
-- **ORIENT:** pair **BTC/USDT**, timeframe **1h**, fees **VIP0 + BNB = 0.075%** maker/taker,
-  slippage 0.05% (`config/backtest/costs.json`, hash-locked).
+- **Exchange entity (ADR 0002, amended 2026-06-27):** trade on **bitbank** (JFSA; ccxt had no
+  Binance Japan entity, bitbank is the only ccxt JFSA venue with OHLCV). **Binance Global** public
+  data is *viewing only* — Global data must never reach a signal/order path. bitbank has no public
+  sandbox → paper/dry-run until P4.
+- **ORIENT:** pair **BTC/JPY**, timeframe **1h**, fees **bitbank maker 0.00% / taker 0.10%**,
+  slippage 0.05% (`config/backtest/costs.json`, hash-locked). Operator confirms live fee schedule.
 - **Deviation (§7):** in-house deterministic backtest runner instead of Freqtrade for P0;
   Freqtrade returns at P3 for dry-run parity (see `PLAN.md` Slice 6).
 - **Config is hash-locked** (`config/config.lock.json`, §15) — re-lock after any intentional
@@ -53,8 +55,8 @@ fails closed not crash (#5), non-positive stop rejected (#6), idempotency-on-res
   fine for a dry-run tick, too few for a backtest sample.
 - **This console is cp1258 (Vietnamese), not UTF-8.** CLIs call `core.console.force_utf8_stdio()`
   so non-ASCII output (§, →, —) doesn't crash; any new printing entrypoint must do the same.
-- **Unverified:** confirm **BTC/USDT is listed on Binance Japan** (its primary quote is JPY); if
-  not, fall back to **BTC/JPY**. Confirm KYC/ToS allow API/bot spot trading (§11).
+- **Operator to verify (bitbank):** confirm KYC + that bitbank's ToS allow API/bot spot trading
+  (§11), and the live fee schedule (§8.3). BTC/JPY is confirmed listed+active via ccxt.
 - **No keys are needed** for tests or the demos. Real keys → P4 only, in a git-ignored `.env`.
 
 ## How to run (full detail in README "Quickstart")
@@ -62,25 +64,27 @@ fails closed not crash (#5), non-positive stop rejected (#6), idempotency-on-res
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest -q          # 248 offline tests
+pytest -q          # 261 offline tests
 ruff check .
-python -m src.dry_run --data-exchange kraken --pair BTC/USDT --timeframe 1h --iterations 1
+# paper dry-run on the real venue (no keys, no real capital):
+python -m src.dry_run --data-exchange bitbank --pair BTC/JPY --timeframe 1h --iterations 1
+# signal parity vs backtest on bitbank data (§8.9):
+python scripts/dryrun_parity.py --exchange bitbank --pair BTC/JPY --days 30
 ```
 
 ## Recommended next steps (in order)
 
-1. **Close P0 — only operational steps remain; the whole code path is proven.**
-   `first_real_backtest.py` pulls ~21.6k real candles (Bybit) → quality gate → reproducible
-   **366-trade** backtest → walk-forward (sample gate TRUE); **`dryrun_parity.py` proves §8.9
-   signal parity (8557/8557, rate 1.0000)**. Remaining is the operator's actual venue:
-   **(a) pin the venue** — ccxt has **no Binance Japan entity** (`binance`→Global; JFSA venues in
-   ccxt: bitbank/bitflyer/coincheck/zaif). Decide: Binance-Japan-via-`binance`-with-JP-account,
-   a ccxt JFSA venue (amends ADR 0002), or defer. Verify KYC/ToS for API spot bots (§11).
-   **(b)** re-run the backtest on that venue's data with its **real fee tier** (§8.3).
-   **(c)** run a live **≥30-day forward dry-run** (`dry_run.py --iterations 0`) and then
-   `python scripts/dryrun_parity.py` (or `backtest/parity.py`) against its event log to confirm
-   parity holds in production. A *dumb* EMA-cross shows **no edge** on real 2.5y data — P0 is
-   about a proven pipeline, not this strategy's P&L.
+1. **Close P0 — only operator-account steps remain; venue now pinned (bitbank BTC/JPY).**
+   Code path proven end-to-end on the real venue: `dry_run.py --data-exchange bitbank --pair
+   BTC/JPY` runs the paper order path; `dryrun_parity.py --exchange bitbank --pair BTC/JPY`
+   shows **519/519 signal parity (rate 1.0000)**. Sample-size/walk-forward proven on Bybit deep
+   history (366 trades) — bitbank serves 1h one-day-per-call so deep pulls are slow. Remaining is
+   the operator's bitbank account: **(a)** confirm bitbank KYC + ToS permits API/bot spot trading
+   (§11); **(b)** confirm the live fee schedule / any maker-rebate campaign (§8.3 — costs.json is
+   set to published 0.00%/0.10%); **(c)** run a live **≥30-day forward dry-run** on bitbank
+   BTC/JPY, then `python scripts/dryrun_parity.py --exchange bitbank --pair BTC/JPY` against its
+   event log to confirm parity holds in production. A *dumb* EMA-cross shows **no edge** on real
+   data — P0 is about a proven pipeline, not this strategy's P&L.
 2. **Then P1 (LLM, optional):** wire `llm/**` sentiment as a **bounded size-haircut, FLOOR=1.0**,
    forward-validated via ablation (§6). Needs Ollama (see `ops/HARDWARE.md`).
 3. **Then P3:** `ui/**` operator dashboard + `strategy/shadow.py`, and reintroduce Freqtrade for
