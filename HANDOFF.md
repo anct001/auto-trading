@@ -21,12 +21,12 @@
 | `data/` feed (closed candles + paginated history), store (Parquet, reproducible), quality gate (§8.1) | `features/cache.py` |
 | `features/indicators` (EMA, ATR — single feature path) | `llm/journal.py` (P2 trade journal) |
 | `strategy/` base + `ema_cross` + **shadow (P3 hypothetical P&L)** | `ui/api.py` FastAPI/SSE transport + market charts/heatmap pixels |
-| `backtest/` runner (+protective stop), metrics, walk-forward, **parity (§8.9)** | `strategy/shadow.py` (P2/P3) |
+| `backtest/` runner (+protective stop), metrics, walk-forward, parity (§8.9), multiple_testing (DSR), hypothesis, **fill_parity (§2)** | running *actual* Freqtrade dry-run (install) to feed fill_parity |
 | `risk/**` FULL engine R0–R7 + sentiment size-multiplier (tighten-only) | — |
 | `execution/**` broker, stops, reconcile, convergence (E1–E4) | — |
 | `llm/` sentiment (P1, inert at FLOOR=1.0) + orchestrator + Ollama backend + **journal + hypothesis_gen (P2)** | — |
 | `backtest/` **multiple_testing (deflated Sharpe) + hypothesis (validate_hypothesis)** (P2 §5) | — |
-| `ui/` preview (Inv 9) + dashboard/model + api/server (stdlib HTTP + dashboard & **markets** pages) + screener + agent_view + **markets** | coin-detail K-line / order-book / order-panel pixels; live-state wiring |
+| `ui/` preview (Inv 9) + dashboard/model + api/server (stdlib HTTP: dashboard / markets / **coin** pages) + screener + agent_view + markets + **coin_detail** + live wiring | order/trade panel + live order-book feed pixels |
 | `events/log` (append-only, secret-redacted) · `core/` (config hash-lock, secrets, clock, console) | — |
 | `fast_loop.py` (§3 keystone, sentiment+regime-wired) · `dry_run.py` (paper CLI, `--sentiment-state`, `--serve-ui`) · `ui/live.py` (UI↔live dry-run) | — |
 
@@ -112,8 +112,9 @@ python scripts/dryrun_parity.py --exchange bitbank --pair BTC/JPY --days 30
    page at `GET /`, `python -m src.ui.server`), `ui/screener.py`, `ui/agent_view.py`. Only the
    richer *market* surfaces (watchlist/coin-detail K-line/heatmap pixels, need a multi-asset feed)
    + `ui/markets.py` (`/markets` watchlist+heatmap, `/api/markets`) are DONE. Only coin-detail
-   K-line / order-book / order-panel pixels remain (live-state wiring is DONE — `dry_run.py
-   --serve-ui` serves the dashboard over the running paper loop); **(b) the gate
+   coin-detail (`/coin` K-line) is DONE; only an order/trade panel + live order-book feed pixels
+   remain (live-state wiring DONE — `dry_run.py --serve-ui`). Fill realism: `backtest/fill_parity.py`
+   quantifies the §2 optimism gap (seam for an actual Freqtrade dry-run reference); **(b) the gate
    itself (operational)** — a **≥30-day continuous dry-run** on bitbank BTC/JPY (no crash),
    `dryrun_parity` green, and **restart-safety** verified (kill mid-trade → clean reconcile, no
    double-trade, §9). Then reintroduce Freqtrade for dry-run fill parity.

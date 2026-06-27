@@ -353,9 +353,13 @@ screener, agent-view, all served by the stdlib transport). Then **wired the UI t
 the preview runs the real engine over live state (Inv 9), and the UI kill-switch IS the loop's
 (engage halts the live loop). Read-only, never blocks the loop (Inv 2). Verified end-to-end (after
 a paper entry: position + fee-adjusted equity + decision log on the live HTTP dashboard).
-Full suite **412**. **Remaining (UI):** only coin-detail K-line / order-book / order-panel pixels
-(need live order-book feeds). **Remaining (gate, operational):** ≥30-day dry-run on bitbank +
-parity + §9 restart-safety; Freqtrade fill-parity.
+Full suite **412**. Then added **fill-parity harness** (`backtest/fill_parity.py`: `MarkFill` vs
+`SlippageLatencyFill` reference + `compare_fills` → optimism-gap report; the §2/Freqtrade-P3 role,
+Freqtrade-adapter seam, no dep) and **coin-detail** (`ui/coin_detail.py` K-line + EMA overlays +
+readouts; `GET /api/coin?pair=` + `/coin` SVG candlestick page; live smoke 60 candles). Full suite
+**426**, ruff clean. **Remaining (UI):** only an order/trade panel + live order-book feed pixels.
+**Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
+*actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
