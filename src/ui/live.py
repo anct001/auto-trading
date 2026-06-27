@@ -49,4 +49,9 @@ def build_live_context(runner) -> OperatorContext:
             state=runner.snapshot_state(), cfg=cfg, ctx=ctx,
         )
 
-    return OperatorContext(dashboard=_dashboard, preview=_preview, killswitch=runner.killswitch)
+    def _orders() -> dict:
+        from src.ui.orders_panel import build_order_trade_panel
+        return build_order_trade_panel(runner.loop.events.read_all())
+
+    return OperatorContext(dashboard=_dashboard, preview=_preview, killswitch=runner.killswitch,
+                           orders=_orders)

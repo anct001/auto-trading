@@ -131,6 +131,23 @@ def test_demo_coin_provider_returns_candles():
     assert len(d["overlays"]["ema_fast"]) == len(d["candles"])
 
 
+def test_orders_api_and_page():
+    ctx = _ctx()
+    ctx.orders = lambda: {"attempts": [{"pair": "BTC/JPY", "approved": True}], "submitted": [], "fills": []}
+    r = handle_request("GET", "/api/orders", None, ctx)
+    assert r.status == 200 and r.body["attempts"][0]["pair"] == "BTC/JPY"
+    empty = handle_request("GET", "/api/orders", None, _ctx())
+    assert empty.body == {"attempts": [], "submitted": [], "fills": []}
+    page = handle_request("GET", "/orders", None, _ctx())
+    assert page.status == 200 and "/api/orders" in page.body
+
+
+def test_demo_orders_provider():
+    from src.ui.server import build_demo_context
+    o = build_demo_context().orders()
+    assert o["attempts"] and o["fills"] and o["submitted"][0]["client_order_id"] == "demo-1"
+
+
 def test_sse_frame_format():
     frame = dashboard_sse_frame({"equity": 1.0})
     assert frame.startswith("data: ") and frame.endswith("\n\n")

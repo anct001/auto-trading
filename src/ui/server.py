@@ -33,6 +33,7 @@ class OperatorContext:
     killswitch: KillSwitch
     markets: Callable[[], dict] | None = None  # () -> {"overview": [...], "heatmap": [...]}
     coin: Callable[[str], dict] | None = None  # pair -> coin_detail payload
+    orders: Callable[[], dict] | None = None   # () -> {"attempts", "submitted", "fills"}
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,17 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
             return Response(405, {"error": "read-only endpoint"})
         pair = (query.get("pair") or [""])[0]
         return Response(200, ctx.coin(pair) if ctx.coin else {})
+
+    if path == "/orders":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, orders_html(), content_type="text/html; charset=utf-8")
+
+    if path == "/api/orders":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        empty = {"attempts": [], "submitted": [], "fills": []}
+        return Response(200, ctx.orders() if ctx.orders else empty)
 
     if path == "/markets":
         if method != "GET":
@@ -239,6 +251,36 @@ draw();setInterval(draw,5000);
 </script></body></html>"""
 
 
+def orders_html() -> str:
+    """Order & trade panel page (§12, read-only) over /api/orders."""
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Orders &amp; trades</title>
+<style>
+ body{font:14px system-ui,sans-serif;background:#0f1115;color:#d7dbe0;margin:0;padding:16px}
+ h1{font-size:16px;margin:0 0 12px} h2{font-size:13px;color:#8b93a1;margin:16px 0 4px} a{color:#6ea8fe}
+ table{border-collapse:collapse;width:100%} th,td{text-align:right;padding:4px 10px;border-bottom:1px solid #232833}
+ th:first-child,td:first-child{text-align:left} th{color:#8b93a1;font-size:11px;text-transform:uppercase}
+ .ok{color:#46d17f} .bad{color:#f06a6a} .agent{color:#6ea8fe} .manual{color:#e6a23c}
+</style></head><body>
+<h1>Orders &amp; trades <a href="/">· dashboard</a></h1>
+<h2>Order attempts (risk verdict + source)</h2>
+<table id="att"><thead><tr><th>Time</th><th>Pair</th><th>Side</th><th>Qty</th><th>Source</th><th>Verdict</th></tr></thead><tbody></tbody></table>
+<h2>Submitted</h2><table id="sub"><thead><tr><th>Time</th><th>Pair</th><th>Side</th><th>Amount</th><th>Client id</th></tr></thead><tbody></tbody></table>
+<h2>Fills</h2><table id="fil"><thead><tr><th>Time</th><th>Pair</th><th>Filled</th></tr></thead><tbody></tbody></table>
+<script>
+const fmt=(n)=>typeof n==="number"?n.toLocaleString(undefined,{maximumFractionDigits:6}):(n??"");
+async function refresh(){try{const d=await (await fetch("/api/orders")).json();
+ document.querySelector("#att tbody").innerHTML=(d.attempts||[]).map(a=>
+  `<tr><td>${a.time}</td><td>${a.pair}</td><td>${a.side}</td><td>${fmt(a.qty)}</td><td class="${a.source}">${a.source}</td><td class="${a.approved?'ok':'bad'}">${a.approved?'passed':'rejected: '+(a.reasons||[]).join(';')}</td></tr>`).join("")||"<tr><td>—</td></tr>";
+ document.querySelector("#sub tbody").innerHTML=(d.submitted||[]).map(s=>
+  `<tr><td>${s.time}</td><td>${s.pair}</td><td>${s.side}</td><td>${fmt(s.amount)}</td><td>${s.client_order_id}</td></tr>`).join("")||"<tr><td>—</td></tr>";
+ document.querySelector("#fil tbody").innerHTML=(d.fills||[]).map(f=>
+  `<tr><td>${f.time}</td><td>${f.pair}</td><td>${fmt(f.filled)}</td></tr>`).join("")||"<tr><td>—</td></tr>";
+}catch(e){}}
+refresh();setInterval(refresh,5000);
+</script></body></html>"""
+
+
 def serve(ctx: OperatorContext, *, host: str = "127.0.0.1", port: int = 8787) -> None:
     """Thin stdlib HTTP adapter around handle_request (not unit-tested — sockets).
 
@@ -327,6 +369,19 @@ def build_demo_context() -> OperatorContext:
         name = p if p in uni else next(iter(uni))
         return build_coin_detail(name, uni[name])
 
+    def _orders() -> dict:
+        from src.events.log import Event
+        from src.ui.orders_panel import build_order_trade_panel
+        evs = [
+            Event("RiskPassed", "2026-06-28T00:00:01+00:00",
+                  {"pair": pair, "side": "buy", "qty": 0.02, "price": price,
+                   "source": "strategy", "reasons": []}),
+            Event("OrderSubmitted", "2026-06-28T00:00:01+00:00",
+                  {"pair": pair, "side": "buy", "qty": 0.02, "client_order_id": "demo-1"}),
+            Event("FillReceived", "2026-06-28T00:00:01+00:00", {"pair": pair, "filled": 0.02}),
+        ]
+        return build_order_trade_panel(evs)
+
     return OperatorContext(
         dashboard=lambda: dashboard_payload(state=state, cfg=cfg, prices={pair: price}, killswitch=ks),
         preview=lambda body: preview_payload(
@@ -336,6 +391,7 @@ def build_demo_context() -> OperatorContext:
         killswitch=ks,
         markets=_markets,
         coin=_coin,
+        orders=_orders,
     )
 
 

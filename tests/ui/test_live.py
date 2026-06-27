@@ -87,6 +87,14 @@ def test_preview_runs_engine_over_live_state(tmp_path):
     assert "allowed" in prev and prev["order"]["source"] == "manual"
 
 
+def test_orders_panel_reflects_live_events(tmp_path):
+    runner = _runner(tmp_path, [INTENT_ENTER_LONG])
+    runner.run_once()  # logs RiskPassed/OrderSubmitted/FillReceived
+    o = build_live_context(runner).orders()
+    assert o["submitted"] and o["fills"]
+    assert any(a["approved"] for a in o["attempts"])
+
+
 def test_killswitch_is_shared_with_the_loop(tmp_path):
     runner = _runner(tmp_path, [INTENT_HOLD])
     ctx = build_live_context(runner)
