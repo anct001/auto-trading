@@ -26,7 +26,7 @@
 | `execution/**` broker, stops, reconcile, convergence (E1–E4) | — |
 | `llm/` sentiment (P1, inert at FLOOR=1.0) + orchestrator + Ollama backend + **journal + hypothesis_gen (P2)** | — |
 | `backtest/` **multiple_testing (deflated Sharpe) + hypothesis (validate_hypothesis)** (P2 §5) | — |
-| `ui/` **preview (manual-order risk preview, Inv 9) + dashboard/model (read-only §12 view)** | — |
+| `ui/` preview (Inv 9) + dashboard/model + **api/server (stdlib HTTP, read-only + kill-switch) + screener + agent_view** | market chart/heatmap **pixels** (HTML/JS front-end) |
 | `events/log` (append-only, secret-redacted) · `core/` (config hash-lock, secrets, clock, console) | — |
 | `fast_loop.py` (the §3 keystone, sentiment-wired) · `dry_run.py` (paper CLI, `--sentiment-state`) | — |
 
@@ -108,7 +108,8 @@ python scripts/dryrun_parity.py --exchange bitbank --pair BTC/JPY --days 30
 4. **P3 (monitor/orchestrate) — deterministic cores BUILT & tested.** `strategy/shadow.py`
    (`ShadowBook`), `ui/preview.py` (`preview_manual_order`, runs the exact engine — Inv 9),
    `ui/dashboard/model.py` (`build_dashboard`, read-only §12 view). Remaining: **(a) UI delivery**
-   — wrap these in `ui/api.py` (FastAPI + SSE) + market charts/heatmap pixels; **(b) the gate
+   — **DONE for the logic side**: `ui/server.py` (stdlib HTTP transport, `python -m src.ui.server`),
+   `ui/screener.py`, `ui/agent_view.py`. Only the market chart/heatmap **pixels** (HTML/JS) remain; **(b) the gate
    itself (operational)** — a **≥30-day continuous dry-run** on bitbank BTC/JPY (no crash),
    `dryrun_parity` green, and **restart-safety** verified (kill mid-trade → clean reconcile, no
    double-trade, §9). Then reintroduce Freqtrade for dry-run fill parity.

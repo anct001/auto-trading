@@ -337,8 +337,12 @@ by default; only writes are kill-switch (`/api/killswitch/engage|rearm`) + manua
 (`/api/preview`, exact risk engine, Inv 9); 405 on write-to-read-only, 404 unknown, 400 rearm
 w/o operator. `dashboard_sse_frame` for SSE; `serve()` + `build_demo_context()` + `main()` make
 `python -m src.ui.server` runnable on a paper snapshot (live smoke verified: dashboard equity +
-engage halt). Full suite **376→384**, ruff clean. **Remaining (UI):** market charts/heatmap/
-screener pixels. **Remaining (gate, operational):** ≥30-day dry-run on bitbank + parity + §9 restart-safety.
+engage halt). Then added `ui/screener.py` (§12 research screener — condition filter over EMA/ATR
+readouts; never trades) and `ui/agent_view.py` (§12 agent-view overlay — per-coin "why acting/not":
+signal, regime, sentiment haircut, position, kill-switch; reuses the loop's exact predicates).
+Full suite **376→396**, ruff clean. **Remaining (UI):** only the market chart/heatmap **pixels**
+(HTML/JS front-end). **Remaining (gate, operational):** ≥30-day dry-run on bitbank + parity + §9
+restart-safety.
 
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
