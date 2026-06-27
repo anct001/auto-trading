@@ -283,7 +283,7 @@ wrote HANDOFF — **can reach Binance/Bybit/OKX, no HTTP 451**).
 | Timeframe | ✅ decided | **1h**. |
 | Actual fee tier | ⛔ pending | VIP level / BNB & maker-taker discounts — wrong tier biases the backtest (§8.3). Needed before the backtest harness slice, not before the data slice. |
 | Operator KYC / ToS | ⛔ operator to verify | Confirm eligibility on Binance Japan + that its ToS permits API/bot spot trading (§11). |
-| Exact ccxt id/endpoint for the JP entity | ⛔ pending | Verify against current docs — do NOT invent (§7/§10). |
+| Exact ccxt id/endpoint for the JP entity | ⚠️ probed 2026-06-27 | **ccxt 4.5.60 has NO Binance Japan entity** (`binance`→Global, plus `binanceus`/futures). JFSA venues in ccxt: bitbank/bitflyer/coincheck/zaif. Operator must pick a venue before P4 — see ADR 0002 "Findings". Doesn't block P0 (pipeline is venue-agnostic). |
 
 ## Next slice (P0, first work item)
 

@@ -50,3 +50,27 @@ so would both break the one-trading-venue scope and create the §11 compliance e
 - **Open ORIENT items (must verify before P0 code, §7/§10):** the exact ccxt id / endpoint for
   Binance Japan (do not invent — read the docs / verify current state), the operator's KYC
   eligibility, and that the Japan entity's ToS permits API/bot spot trading.
+
+## Findings (2026-06-27, ccxt 4.5.60) — the ccxt-id item, partially resolved
+
+Probed ccxt from the operator's local machine (which reaches Binance, no HTTP 451):
+
+- **There is NO dedicated Binance Japan entity in ccxt.** The binance-family ids are
+  `binance` (→ `api.binance.com`, i.e. **Global**), `binanceus` (US entity), `binancecoinm`,
+  `binanceusdm` (futures). No `binancejp` / `binance.co.jp` host exists in the unified client.
+- Binance **Global** lists `BTC/USDT`, `BTC/JPY`, `BTC/USDC` (all active spot) and ~30 `/JPY`
+  pairs — but per this ADR, **Global is view-only**; its listings do **not** establish what
+  Binance Japan K.K. lists or what a Japan-resident account may legally trade.
+- **ccxt-supported Japan-native exchanges:** `bitbank`, `bitflyer`, `coincheck`, `zaif`.
+
+**Implication — an operator decision is required before any real-capital path (P4):** the
+"trade on Binance Japan via ccxt" assumption is not directly satisfiable with the current
+unified client. Options, none chosen here (do not invent):
+  1. Confirm whether Binance Japan K.K. exposes an API compatible with ccxt's `binance` class
+     using a Japan-KYC'd account (verify with the operator's real account + current Binance docs).
+  2. Use a ccxt-native JFSA-registered venue instead (`bitbank` / `bitflyer` / `coincheck`),
+     which would amend this ADR's "trading venue" choice.
+  3. Defer the venue binding: P0 harness validation runs on deep-history public data (Bybit
+     today) — it proves the pipeline, not the venue. The venue must be pinned before P4.
+
+This does **not** block the rest of P0 (pipeline is venue-agnostic); it blocks P4 go-live.
