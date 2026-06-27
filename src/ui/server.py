@@ -419,7 +419,8 @@ refresh();setInterval(refresh,5000);
 
 
 def coin_detail_html() -> str:
-    """Coin-detail page (§12): SVG candlestick + EMA overlays + readouts over /api/coin?pair=."""
+    """Coin-detail page (§12): TradingView Lightweight Charts (vendored, Apache-2.0) candlestick +
+    volume + EMA overlays + multi-timeframe, over our own /api/coin data (no external data feed)."""
     return """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Coin detail</title>
 <style>
@@ -427,13 +428,30 @@ def coin_detail_html() -> str:
  h1{font-size:16px;margin:0 0 12px} a{color:#6ea8fe} .lbl{color:#8b93a1;font-size:11px;text-transform:uppercase}
  #ro span{margin-right:16px} svg{background:#171a21;border:1px solid #232833;border-radius:8px}
 </style></head><body>
-<h1>Coin detail: <span id="pair"></span> <a href="/markets">· markets</a> <a href="/">· dashboard</a></h1>
+<h1>Coin detail: <span id="pair"></span> <span id="tfbtns"></span> <a href="/markets">· markets</a> <a href="/">· dashboard</a></h1>
 <div id="agent" style="margin:6px 0 10px;padding:8px 12px;background:#171a21;border:1px solid #232833;border-radius:8px"></div>
 <div id="ro" class="lbl"></div>
-<svg id="chart" viewBox="0 0 900 360" width="100%" height="360"></svg>
+<div id="chart" style="height:380px;border:1px solid #232833;border-radius:8px"></div>
+<div class="lbl" style="margin-top:4px">Chart: TradingView Lightweight Charts™ (Apache-2.0, vendored) over our own /api/coin data</div>
 <h2 class="lbl" style="margin-top:14px">Order book <span id="spread"></span></h2>
 <table id="ob" style="width:auto;border-collapse:collapse"><tbody></tbody></table>
+<script src="/static/lightweight-charts.js"></script>
 <script>
+let TF="";const TFS=["1h","4h","1d"];
+function renderTf(){document.getElementById("tfbtns").innerHTML=TFS.map(t=>`<button onclick="setTF('${t}')" style="font-size:11px;padding:1px 7px;background:#222a36;color:#cdd3de;border:1px solid ${t===(TF||TFS[0])?'#6ea8fe':'#313b4a'};border-radius:4px;cursor:pointer">${t}</button>`).join(" ");}
+function setTF(t){TF=t;renderTf();draw();}
+let _chart,_cs,_vol,_ef,_es;
+function ensureChart(){if(_chart)return;const el=document.getElementById("chart");
+ _chart=LightweightCharts.createChart(el,{width:el.clientWidth,height:380,
+  layout:{background:{color:'#171a21'},textColor:'#cdd3de'},
+  grid:{vertLines:{color:'#1e2530'},horzLines:{color:'#1e2530'}},
+  rightPriceScale:{borderColor:'#1e2530'},timeScale:{borderColor:'#1e2530',timeVisible:true,secondsVisible:false},crosshair:{mode:1}});
+ _cs=_chart.addCandlestickSeries({upColor:'#46d17f',downColor:'#f06a6a',borderVisible:false,wickUpColor:'#46d17f',wickDownColor:'#f06a6a'});
+ _vol=_chart.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'vol'});
+ _chart.priceScale('vol').applyOptions({scaleMargins:{top:0.82,bottom:0}});
+ _ef=_chart.addLineSeries({color:'#e6a23c',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
+ _es=_chart.addLineSeries({color:'#6ea8fe',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
+ window.addEventListener("resize",()=>_chart.applyOptions({width:el.clientWidth}));}
 const params=new URLSearchParams(location.search);const pair=params.get("pair")||"BTC/JPY";
 document.getElementById("pair").textContent=pair;
 const fmtn=(n)=>n==null?"—":n.toLocaleString(undefined,{maximumFractionDigits:6});
@@ -456,28 +474,20 @@ async function drawBook(){
   const row=(side,r)=>`<tr><td style="color:${side==='ask'?'#f06a6a':'#46d17f'};padding:2px 12px;text-align:right">${fmtn(r.price)}</td><td style="padding:2px 12px;text-align:right;color:#8b93a1">${fmtn(r.amount)}</td><td style="padding:2px 12px;text-align:right;color:#6b7280">${fmtn(r.cum)}</td></tr>`;
   document.querySelector("#ob tbody").innerHTML=asks.map(r=>row("ask",r)).join("")+bids.map(r=>row("bid",r)).join("")||"<tr><td class=lbl>no book</td></tr>";
  }catch(e){}}
-const NS="http://www.w3.org/2000/svg";
-function line(pts,color){const p=document.createElementNS(NS,"polyline");p.setAttribute("points",pts);
- p.setAttribute("fill","none");p.setAttribute("stroke",color);p.setAttribute("stroke-width","1.2");return p;}
-async function draw(){
- const d=await (await fetch("/api/coin?pair="+encodeURIComponent(pair))).json();
- const c=d.candles||[];const svg=document.getElementById("chart");svg.innerHTML="";
- if(!c.length){svg.innerHTML='<text x=20 y=30 fill="#8b93a1">no data</text>';return;}
- const W=900,H=360,pad=30;const lo=Math.min(...c.map(x=>x.l)),hi=Math.max(...c.map(x=>x.h));
- const x=i=>pad+i*(W-2*pad)/(c.length-1||1);const y=v=>H-pad-(v-lo)/((hi-lo)||1)*(H-2*pad);
- const cw=Math.max(1,(W-2*pad)/c.length*0.6);
- c.forEach((k,i)=>{const up=k.c>=k.o;const col=up?"#46d17f":"#f06a6a";
-  const wick=document.createElementNS(NS,"line");wick.setAttribute("x1",x(i));wick.setAttribute("x2",x(i));
-  wick.setAttribute("y1",y(k.h));wick.setAttribute("y2",y(k.l));wick.setAttribute("stroke",col);svg.appendChild(wick);
-  const r=document.createElementNS(NS,"rect");r.setAttribute("x",x(i)-cw/2);r.setAttribute("width",cw);
-  r.setAttribute("y",y(Math.max(k.o,k.c)));r.setAttribute("height",Math.max(1,Math.abs(y(k.o)-y(k.c))));
-  r.setAttribute("fill",col);svg.appendChild(r);});
- const ef=d.overlays.ema_fast,es=d.overlays.ema_slow;
- const mk=arr=>arr.map((v,i)=>v==null?null:x(i)+","+y(v)).filter(Boolean).join(" ");
- svg.appendChild(line(mk(ef),"#e6a23c"));svg.appendChild(line(mk(es),"#6ea8fe"));
- const r=d.readouts||{};document.getElementById("ro").innerHTML=
-  `<span>close ${r.close?.toFixed?.(2)}</span><span>EMA fast(orange)/slow(blue)</span>`+
-  `<span>ATR% ${r.atr_pct?.toFixed?.(3)}</span><span>trend ${r.ema_fast_above_slow?'▲':'▽'}</span>`;
+async function draw(){renderTf();
+ const d=await (await fetch("/api/coin?pair="+encodeURIComponent(pair)+(TF?("&tf="+encodeURIComponent(TF)):""))).json();
+ const c=(d&&d.candles)||[];ensureChart();
+ if(c.length){
+  _cs.setData(c.map(k=>({time:k.time,open:k.o,high:k.h,low:k.l,close:k.c})));
+  _vol.setData(c.map(k=>({time:k.time,value:k.v,color:k.c>=k.o?'rgba(70,209,127,.4)':'rgba(240,106,106,.4)'})));
+  const ov=d.overlays||{};
+  _ef.setData(c.map((k,i)=>({time:k.time,value:(ov.ema_fast||[])[i]})).filter(p=>p.value!=null));
+  _es.setData(c.map((k,i)=>({time:k.time,value:(ov.ema_slow||[])[i]})).filter(p=>p.value!=null));
+ }
+ const r=(d&&d.readouts)||{};document.getElementById("ro").innerHTML=
+  `<span>close ${r.close?.toFixed?.(2)??"—"}</span><span>EMA fast(orange)/slow(blue)</span>`+
+  `<span>ATR% ${r.atr_pct?.toFixed?.(3)??"—"}</span><span>trend ${r.ema_fast_above_slow?'▲':'▽'}</span>`+
+  (c.length?"":'<span class=bad>no data for this timeframe on this venue</span>');
 }
 draw();setInterval(draw,5000);drawBook();setInterval(drawBook,5000);drawAgent();setInterval(drawAgent,5000);
 </script></body></html>"""
@@ -576,9 +586,31 @@ def serve(ctx: OperatorContext, *, host: str = "127.0.0.1", port: int = 8787) ->
             except (BrokenPipeError, ConnectionResetError, OSError):
                 return  # client disconnected — end the stream quietly
 
+        def _serve_static(self, name: str) -> None:
+            """Serve a vendored asset (e.g. lightweight-charts.js) from src/ui/static, same-origin."""
+            import pathlib
+            base = pathlib.Path(__file__).parent / "static"
+            target = (base / name).resolve()
+            if base.resolve() not in target.parents or not target.is_file():
+                self.send_response(404)
+                self.end_headers()
+                return
+            data = target.read_bytes()
+            ct = "application/javascript" if target.suffix == ".js" else "application/octet-stream"
+            self.send_response(200)
+            self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "max-age=86400")
+            self.end_headers()
+            self.wfile.write(data)
+
         def do_GET(self) -> None:   # noqa: N802 (stdlib API)
-            if self.path.split("?", 1)[0].rstrip("/") == "/api/stream":
+            p = self.path.split("?", 1)[0].rstrip("/")
+            if p == "/api/stream":
                 self._stream_dashboard()
+                return
+            if p.startswith("/static/"):
+                self._serve_static(p[len("/static/"):])
                 return
             self._dispatch("GET")
 

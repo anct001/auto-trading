@@ -35,9 +35,10 @@ def build_coin_detail(
     slow = ema(df["close"], ema_slow)
     start = max(0, n - max_candles)
     candles = [
-        {"t": str(df["timestamp"].iloc[i]), "o": float(df["open"].iloc[i]),
-         "h": float(df["high"].iloc[i]), "l": float(df["low"].iloc[i]),
-         "c": float(df["close"].iloc[i]), "v": float(df["volume"].iloc[i])}
+        {"t": str(df["timestamp"].iloc[i]), "time": int(df["timestamp"].iloc[i].timestamp()),
+         "o": float(df["open"].iloc[i]), "h": float(df["high"].iloc[i]),
+         "l": float(df["low"].iloc[i]), "c": float(df["close"].iloc[i]),
+         "v": float(df["volume"].iloc[i])}
         for i in range(start, n)
     ]
     return {

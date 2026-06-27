@@ -223,6 +223,23 @@ def test_demo_trades_tape_and_tf_coin():
     assert ctx.coin("BTC/JPY", "4h")["timeframe"] == "4h"  # timeframe echoed
 
 
+def test_vendored_chart_lib_present_and_apache():
+    from pathlib import Path
+
+    import src.ui.server as s
+    f = Path(s.__file__).parent / "static" / "lightweight-charts.js"
+    assert f.is_file() and f.stat().st_size > 50_000
+    head = f.read_text(encoding="utf-8", errors="ignore")[:400]
+    assert "Lightweight Charts" in head and "Apache License" in head  # vendored w/ license header
+
+
+def test_coin_page_uses_lightweight_charts():
+    r = handle_request("GET", "/coin", None, _ctx())
+    assert "/static/lightweight-charts.js" in r.body          # local, not a CDN
+    assert "addCandlestickSeries" in r.body and "ensureChart" in r.body
+    assert "setTF" in r.body and "TFS" in r.body               # multi-timeframe on the chart page too
+
+
 def test_coin_page_has_agentview_panel():
     r = handle_request("GET", "/coin", None, _ctx())
     assert "/api/agentview" in r.body and "Agent view" in r.body
