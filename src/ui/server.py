@@ -30,6 +30,7 @@ class OperatorContext:
     dashboard: Callable[[], dict]          # () -> dashboard_payload(...)
     preview: Callable[[dict], dict]        # body -> preview_payload(...)
     killswitch: KillSwitch
+    markets: Callable[[], dict] | None = None  # () -> {"overview": [...], "heatmap": [...]}
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,16 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
         return Response(200, index_html(), content_type="text/html; charset=utf-8")
+
+    if path == "/markets":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, markets_html(), content_type="text/html; charset=utf-8")
+
+    if path == "/api/markets":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, ctx.markets() if ctx.markets else {"overview": [], "heatmap": []})
 
     if path == "/api/dashboard":
         if method != "GET":
@@ -141,6 +152,36 @@ refresh();setInterval(refresh,5000);
 </script></body></html>"""
 
 
+def markets_html() -> str:
+    """Markets overview / watchlist + heatmap page (§12, read-only) over /api/markets."""
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Markets</title>
+<style>
+ body{font:14px system-ui,sans-serif;background:#0f1115;color:#d7dbe0;margin:0;padding:16px}
+ h1{font-size:16px;margin:0 0 12px} a{color:#6ea8fe}
+ table{border-collapse:collapse;width:100%;margin-top:6px}
+ th,td{text-align:right;padding:5px 10px;border-bottom:1px solid #232833} th:first-child,td:first-child{text-align:left}
+ th{color:#8b93a1;font-size:11px;text-transform:uppercase} .ok{color:#46d17f} .bad{color:#f06a6a}
+ #heat{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+ .tile{border-radius:6px;padding:8px;min-width:70px;color:#0f1115;font-weight:600}
+</style></head><body>
+<h1>Markets <a href="/">· dashboard</a></h1>
+<div class="lbl">Heatmap (size = volume proxy, color = change)</div><div id="heat"></div>
+<table id="ov"><thead><tr><th>Pair</th><th>Close</th><th>Change %</th><th>ATR %</th><th>Trend</th><th>Volume</th></tr></thead><tbody></tbody></table>
+<script>
+const fmt=(n)=>typeof n==="number"?n.toLocaleString(undefined,{maximumFractionDigits:4}):n;
+function bg(c){if(c>=0)return`rgba(70,209,127,${Math.min(0.85,0.25+Math.abs(c)/10)})`;
+ return`rgba(240,106,106,${Math.min(0.85,0.25+Math.abs(c)/10)})`;}
+async function refresh(){try{const d=await (await fetch("/api/markets")).json();
+ document.getElementById("heat").innerHTML=(d.heatmap||[]).map(t=>
+  `<div class="tile" style="background:${bg(t.change_pct)}">${t.pair}<br>${fmt(t.change_pct)}%</div>`).join("")||"<span class=lbl>no data</span>";
+ document.querySelector("#ov tbody").innerHTML=(d.overview||[]).map(r=>
+  `<tr><td>${r.pair}</td><td>${fmt(r.close)}</td><td class="${r.change_pct>=0?'ok':'bad'}">${fmt(r.change_pct)}</td><td>${fmt(r.atr_pct)}</td><td>${r.trend_up?'▲':'▽'}</td><td>${fmt(r.volume)}</td></tr>`).join("");
+}catch(e){}}
+refresh();setInterval(refresh,5000);
+</script></body></html>"""
+
+
 def serve(ctx: OperatorContext, *, host: str = "127.0.0.1", port: int = 8787) -> None:
     """Thin stdlib HTTP adapter around handle_request (not unit-tested — sockets).
 
@@ -205,6 +246,24 @@ def build_demo_context() -> OperatorContext:
         return engine.RiskContext(prices={pair: price}, exchange_state=dict(good),
                                   killswitch=ks, market=market)
 
+    def _markets():
+        import pandas as pd
+
+        from src.ui.markets import build_markets_overview, heatmap_tiles
+        t0 = pd.Timestamp("2026-06-01T00:00:00Z")
+
+        def frame(step, vol):
+            rows, p = [], 1_000_000.0
+            for i in range(40):
+                p *= (1.0 + step)
+                rows.append([t0 + pd.Timedelta(hours=i), p, p * 1.002, p * 0.998, p, vol])
+            return pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+        universe = {"BTC/JPY": frame(0.004, 12.0), "ETH/JPY": frame(-0.003, 30.0),
+                    "XRP/JPY": frame(0.001, 8.0)}
+        overview = build_markets_overview(universe, lookback=24)
+        return {"overview": overview, "heatmap": heatmap_tiles(overview)}
+
     return OperatorContext(
         dashboard=lambda: dashboard_payload(state=state, cfg=cfg, prices={pair: price}, killswitch=ks),
         preview=lambda body: preview_payload(
@@ -212,6 +271,7 @@ def build_demo_context() -> OperatorContext:
             qty=float(body.get("qty", 0.0) or 0.0), price=float(body.get("price", price) or price),
             state=state, cfg=cfg, ctx=_ctx_obj()),
         killswitch=ks,
+        markets=_markets,
     )
 
 

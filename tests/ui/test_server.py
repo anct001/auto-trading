@@ -80,6 +80,30 @@ def test_json_routes_keep_json_content_type():
     assert handle_request("GET", "/api/dashboard", None, _ctx()).content_type == "application/json"
 
 
+def test_markets_api_returns_overview_and_heatmap():
+    ctx = _ctx()
+    ctx.markets = lambda: {"overview": [{"pair": "BTC/JPY", "change_pct": 1.2}], "heatmap": []}
+    r = handle_request("GET", "/api/markets", None, ctx)
+    assert r.status == 200 and r.body["overview"][0]["pair"] == "BTC/JPY"
+
+
+def test_markets_api_empty_when_unconfigured():
+    r = handle_request("GET", "/api/markets", None, _ctx())  # no markets provider
+    assert r.status == 200 and r.body == {"overview": [], "heatmap": []}
+
+
+def test_markets_page_served():
+    r = handle_request("GET", "/markets", None, _ctx())
+    assert r.status == 200 and r.content_type.startswith("text/html")
+    assert "/api/markets" in r.body and "://" not in r.body
+
+
+def test_demo_markets_provider_works():
+    from src.ui.server import build_demo_context
+    m = build_demo_context().markets()
+    assert {"overview", "heatmap"} <= m.keys() and len(m["overview"]) == 3
+
+
 def test_sse_frame_format():
     frame = dashboard_sse_frame({"equity": 1.0})
     assert frame.startswith("data: ") and frame.endswith("\n\n")
