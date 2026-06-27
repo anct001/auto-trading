@@ -305,6 +305,20 @@ no Ollama needed for tests. The feature is wired but a **strict no-op at the def
 - **Remaining (operational):** run Ollama, produce real sentiment_state.json, run the ≥30-day
   ablation (feature on vs off) to decide forward if it helps; FLOOR stays 1.0 until it does.
 
+### 2026-06-27 (local session, cont.) — P2 hypothesis-validation machinery BUILT
+Built the deterministic anti-data-snooping core of P2 (§5), all tested without Ollama:
+- `llm/journal.py` — append-only AI trade/hypothesis journal (§15); `count_trials()` = §5
+  denominator (validated|rejected only). 
+- `backtest/multiple_testing.py` — Probabilistic + **Deflated Sharpe** (Bailey & López de Prado);
+  ships own `norm_cdf`(erf)/`norm_ppf`(Acklam), no scipy. Bar rises with #trials; non-normal
+  returns penalised.
+- `backtest/hypothesis.validate_hypothesis` — walk-forward → per-trade SR/skew/kurt → DSR vs the
+  journal's trial count → VALIDATE iff sample-size gate AND DSR≥threshold; every attempt journalled.
+- `llm/hypothesis_gen.py` — offline LLM proposer, **human-gated** (Inv 1/8), strict param budget
+  (over-budget dropped); stdlib Ollama backend, transport injected → tested offline.
+- Full suite **313→343 passed**, ruff clean. **Remaining (operational):** run proposer → human
+  approves → validate on real bitbank BTC/JPY → clear gate with ≥1 net-of-cost+tax validated edge.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.
@@ -341,7 +355,7 @@ first slice. Next: write `PLAN.md` (slices, each with a proof command), then bui
 |-------|-------|------|
 | P0 data harness | **code proven on real venue; awaiting operator's bitbank account close** | §8 proven |
 | P1 LLM sentiment feature | **built + tested, inert at FLOOR=1.0; awaiting Ollama + ablation** | forward-validated ablation |
-| P2 hypothesis generation | not started | ≥1 LLM strategy walk-forward validated |
+| P2 hypothesis generation | **validation machinery built + tested; awaiting Ollama + human-approved validated edge** | ≥1 LLM strategy walk-forward validated |
 | P3 monitor/orchestrate | not started | ≥30d dry-run, signal metrics ≈ backtest |
 | P4 tiny real capital | not started | §14 go-live checklist + human sign-off |
 | P5 scale | not started | sustained live perf + capacity + sign-off |

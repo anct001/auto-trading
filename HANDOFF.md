@@ -6,9 +6,10 @@
 
 ## Where things stand
 
-- **Branch:** `claude/new-session-vcxyyp` · **Phase:** P0 harness proven + **P1 feature built
-  (inert at FLOOR=1.0)**; neither formally closed (both await operator-side operational steps) ·
-  **Tests:** 313 passing, `ruff` clean. Committed (local; push when a remote is configured).
+- **Branch:** `claude/new-session-vcxyyp` · **Phase:** P0 harness proven · **P1** sentiment built
+  (inert at FLOOR=1.0) · **P2** hypothesis-validation machinery built; none formally closed (all
+  await operator-side operational steps + Ollama) · **Tests:** 343 passing, `ruff` clean.
+  Committed (local; push when a remote is configured).
 - **What this is:** a solo-operator, paper-first, phase-gated crypto trading system. Deterministic
   engine makes every trade; a local LLM is an out-of-loop researcher (sentiment size-haircut only).
 
@@ -22,7 +23,8 @@
 | `backtest/` runner (+protective stop), metrics, walk-forward, **parity (§8.9)** | `strategy/shadow.py` (P2/P3) |
 | `risk/**` FULL engine R0–R7 + sentiment size-multiplier (tighten-only) | — |
 | `execution/**` broker, stops, reconcile, convergence (E1–E4) | — |
-| `llm/` sentiment haircut + state_io + orchestrator + Ollama backend (**P1, inert at FLOOR=1.0**) | — |
+| `llm/` sentiment (P1, inert at FLOOR=1.0) + orchestrator + Ollama backend + **journal + hypothesis_gen (P2)** | — |
+| `backtest/` **multiple_testing (deflated Sharpe) + hypothesis (validate_hypothesis)** (P2 §5) | — |
 | `events/log` (append-only, secret-redacted) · `core/` (config hash-lock, secrets, clock, console) | — |
 | `fast_loop.py` (the §3 keystone, sentiment-wired) · `dry_run.py` (paper CLI, `--sentiment-state`) | — |
 
@@ -95,9 +97,15 @@ python scripts/dryrun_parity.py --exchange bitbank --pair BTC/JPY --days 30
    **ablation** — parallel dry-runs feature-on vs feature-off for ≥30 days — to decide *forward*
    if it helps (no historical backtest of the feature — look-ahead, §6). Keep `sentiment_floor`
    at **1.0** in `config/risk/default.json` until it demonstrably helps; lower it (≥0.5) + re-lock.
-3. **Then P2/P3:** `llm/journal.py` (trade journal), `strategy/shadow.py`, `ui/**` operator
-   dashboard, and reintroduce Freqtrade for dry-run fill parity.
-4. **Never skip a gate; the kill-switch is sacred; no real capital before the §14 checklist.**
+3. **P2 (hypothesis generation) — validation machinery BUILT & tested; needs Ollama + a human.**
+   `llm/journal.py` (trial memory), `backtest/multiple_testing.py` (deflated Sharpe, §5),
+   `backtest/hypothesis.validate_hypothesis` (walk-forward + DSR + journal), `llm/hypothesis_gen.py`
+   (offline proposer, human-gated, strict param budget). Remaining (operational): run the proposer
+   → **a human approves each** → `validate_hypothesis` on real bitbank BTC/JPY → clear the gate
+   with ≥1 net-of-cost+tax validated edge that survives the §5 correction.
+4. **Then P3:** `strategy/shadow.py`, `ui/**` operator dashboard, and reintroduce Freqtrade for
+   dry-run fill parity.
+5. **Never skip a gate; the kill-switch is sacred; no real capital before the §14 checklist.**
 
 ## Hardware
 
