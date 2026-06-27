@@ -96,6 +96,41 @@ def test_sub_minimum_entry_is_skipped():
     assert res.trades.empty  # entry skipped, never rounded up to meet the minimum
 
 
+def _crash_frame():
+    # 5 calm ~10000 bars (±50), then bar 5 dips intrabar below the protective stop, then lower.
+    # open=close on calm bars; bar 5 opens above the stop but its low pierces it.
+    rows = [[T0 + i * HOUR, 10000, 10050, 9950, 10000, 10.0] for i in range(5)]
+    rows.append([T0 + 5 * HOUR, 9810, 9820, 9500, 9700, 10.0])   # low 9500 pierces ~9805 stop
+    rows += [[T0 + (6 + i) * HOUR, 9400 - 100 * i, 9450 - 100 * i, 9300 - 100 * i, 9400 - 100 * i, 10.0]
+             for i in range(4)]
+    return pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+
+
+def test_protective_stop_exits_near_budget_before_a_deeper_drop():
+    # enter at bar 4; no exit signal — without a stop the position would ride the crash to the end
+    intents = [INTENT_HOLD] * 3 + [INTENT_ENTER_LONG] + [INTENT_HOLD] * 6
+    df = _crash_frame()
+    risk = RiskSizing(cfg=_cfg(), market=_MARKET, pair="BTC/USDT", atr_period=3, atr_stop_mult=2.0)
+    res = run_backtest(df, FakeStrategy(intents), costs=_COSTS, initial_equity=10000.0, risk=risk)
+    assert len(res.trades) == 1
+    trade = res.trades.iloc[0]
+    # exited at the stop bar (5), not force-closed at the end (bar 9)
+    assert trade["exit_time"] == T0 + 5 * HOUR
+    # loss is bounded near the per-trade budget (~0.5%), NOT the full ~15% crash
+    assert -0.01 < trade["return"] < 0
+
+
+def test_gap_down_through_stop_fills_at_open_worse_than_budget():
+    # bar 5 GAPS open below the stop → fills at the (worse) open, realizing more than the budget
+    rows = [[T0 + i * HOUR, 10000, 10050, 9950, 10000, 10.0] for i in range(5)]
+    rows.append([T0 + 5 * HOUR, 9000, 9050, 8900, 9000, 10.0])  # gap open far below stop
+    df = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+    intents = [INTENT_HOLD] * 3 + [INTENT_ENTER_LONG] + [INTENT_HOLD] * 2
+    risk = RiskSizing(cfg=_cfg(), market=_MARKET, pair="BTC/USDT", atr_period=3, atr_stop_mult=2.0)
+    res = run_backtest(df, FakeStrategy(intents), costs=_COSTS, initial_equity=10000.0, risk=risk)
+    assert res.trades.iloc[0]["exit_time"] == T0 + 5 * HOUR  # stopped on the gap bar
+
+
 def test_risk_backtest_is_reproducible():
     df = _frame()
     risk = RiskSizing(cfg=_cfg(), market=_MARKET, pair="BTC/USDT", atr_period=3)

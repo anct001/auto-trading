@@ -99,6 +99,7 @@ def run_backtest(
     signals = strategy.generate_signals(df).to_numpy()
     ts = pd.to_datetime(df["timestamp"], utc=True).to_numpy()
     opens = df["open"].to_numpy(dtype="float64")
+    lows = df["low"].to_numpy(dtype="float64")
     closes = df["close"].to_numpy(dtype="float64")
     atr_series = atr_fn(df, risk.atr_period).to_numpy() if risk else None
     n = len(df)
@@ -107,12 +108,13 @@ def run_backtest(
     units = 0.0
     in_position = False
     entry_time = entry_price = entry_equity = None
+    stop_price: float | None = None  # protective stop for the open position (risk mode)
     trades: list[dict] = []
     equity_curve = []
 
     def _open_position(i: int) -> None:
         """Open a long at bar i's open. Returns silently without opening if risk sizing skips."""
-        nonlocal cash, units, in_position, entry_time, entry_price, entry_equity
+        nonlocal cash, units, in_position, entry_time, entry_price, entry_equity, stop_price
         fill = opens[i] * (1 + costs.slippage)
         if risk is None:
             # full-equity placeholder: deploy all cash (fee taken from cash)
@@ -139,9 +141,13 @@ def run_backtest(
         units = qty
         in_position = True
         entry_time, entry_price = ts[i], fill
+        # protective stop at entry − atr_stop_mult×ATR (risk mode only). This is the same stop
+        # the live system places exchange-side (§4), so the backtest realizes the modeled risk
+        # instead of riding a loser to the exit signal.
+        stop_price = (fill - risk.atr_stop_mult * atr_i) if risk else None
 
     def _close_position(i: int, price: float) -> None:
-        nonlocal cash, units, in_position
+        nonlocal cash, units, in_position, stop_price
         fill = price * (1 - costs.slippage)
         proceeds = units * fill
         cash += proceeds * (1 - costs.taker_fee)
@@ -157,15 +163,27 @@ def run_backtest(
         )
         units = 0.0
         in_position = False
+        stop_price = None
 
     for i in range(n):
-        # act on the PREVIOUS bar's signal at this bar's open (no look-ahead)
         if i > 0:
-            prev = signals[i - 1]
-            if prev == INTENT_ENTER_LONG and not in_position:
-                _open_position(i)
-            elif prev == INTENT_EXIT and in_position:
-                _close_position(i, opens[i])
+            # 1) protective stop takes priority over the signal: a gap below the stop fills at the
+            #    (worse) open; an intrabar pierce fills at the stop price. Slippage applied on exit.
+            stopped = False
+            if in_position and stop_price is not None:
+                if opens[i] <= stop_price:
+                    _close_position(i, opens[i])
+                    stopped = True
+                elif lows[i] <= stop_price:
+                    _close_position(i, stop_price)
+                    stopped = True
+            # 2) otherwise act on the PREVIOUS bar's signal at this bar's open (no look-ahead)
+            if not stopped:
+                prev = signals[i - 1]
+                if prev == INTENT_ENTER_LONG and not in_position:
+                    _open_position(i)
+                elif prev == INTENT_EXIT and in_position:
+                    _close_position(i, opens[i])
         equity_curve.append(cash + units * closes[i])
 
     # force-close any open position at the last bar's close so equity/trades are realized
