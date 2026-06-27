@@ -31,9 +31,59 @@ an out-of-loop researcher; a deterministic, backtested, risk-capped engine makes
 
 ## Status
 
-**Current phase: P0** (data harness, reproducible backtest, one dumb strategy — all unproven).
-This repository is at the **scaffold** stage: directory structure + stub modules citing the
-spec, no trading logic yet. See [`PROGRESS.md`](PROGRESS.md).
+**Current phase: P0** (data harness, reproducible backtest, dumb strategy, full risk + execution
+money-code, fast-loop orchestrator). All logic is unit/integration tested but has **not** been
+proven against real data on the target venue — P0 is **not** closed. There is **no live trading
+yet** (real capital is gated behind P3/P4). See [`PROGRESS.md`](PROGRESS.md).
+
+## Quickstart
+
+Requires **Python 3.11+**. Outbound network access to an exchange is needed only for the data
+demo, not for tests.
+
+```bash
+# 1) clone, then create an isolated environment
+python3 -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+
+# 2) install the package + dev tools (editable)
+pip install -e ".[dev]"
+
+# 3) run the test suite (244 tests, all offline/mock — no network, no keys)
+pytest -q
+
+# 4) lint
+ruff check .
+
+# 5) verify config integrity (§15 hash-lock)
+python -c "from pathlib import Path; from src.core.config import load_manifest, verify_configs as v; \
+m=load_manifest('config/config.lock.json'); v([Path(p) for p in m], {str(Path(p)):h for p,h in m.items()}); \
+print('config integrity OK')"
+```
+
+### Run the data → backtest demo (needs network)
+
+```bash
+python scripts/first_real_backtest.py
+```
+
+Pulls real BTC/USDT 1h OHLCV and runs the full pipeline (fetch → quality gate → features →
+strategy → risk-sized backtest → walk-forward/metrics), proving it is reproducible. **Caveats:**
+it uses **Kraken** as a provisional source because Binance is geo-blocked from many hosts (HTTP
+451), applies the Binance VIP0 cost model, and over ~30 days yields too few trades — the
+sample-size gate correctly reports the result as not meaningful. This validates the harness, it
+does **not** close P0.
+
+### Secrets / live trading
+
+No keys are needed for tests or the demo. Real keys (trade-only, withdrawals disabled,
+IP-whitelisted) belong in a git-ignored `.env` — copy [`.env.example`](.env.example) — and are
+only used at **P4** after the §14 go-live checklist. There is intentionally **no command that
+trades real capital** in this repository yet.
+
+### What does NOT exist yet
+
+A live/dry-run loop runner CLI (the `src/fast_loop.py` orchestrator is a library, driven by
+tests), the LLM slow loop (`llm/**`, P1, needs Ollama), and the operator UI (`ui/**`, P3).
 
 ## Layout
 
