@@ -7,9 +7,10 @@
 ## Where things stand
 
 - **Branch:** `claude/new-session-vcxyyp` · **Phase:** P0 harness proven · **P1** sentiment built
-  (inert at FLOOR=1.0) · **P2** hypothesis-validation machinery built; none formally closed (all
-  await operator-side operational steps + Ollama) · **Tests:** 343 passing, `ruff` clean.
-  Committed (local; push when a remote is configured).
+  (inert at FLOOR=1.0) · **P2** hypothesis-validation machinery built · **P3** deterministic cores
+  built (shadow / risk-preview / dashboard model); none formally closed (all await operator-side
+  operational steps + Ollama + UI transport) · **Tests:** 361 passing, `ruff` clean. Committed
+  (local; push when a remote is configured).
 - **What this is:** a solo-operator, paper-first, phase-gated crypto trading system. Deterministic
   engine makes every trade; a local LLM is an out-of-loop researcher (sentiment size-haircut only).
 
@@ -19,12 +20,13 @@
 |---|---|
 | `data/` feed (closed candles + paginated history), store (Parquet, reproducible), quality gate (§8.1) | `features/cache.py` |
 | `features/indicators` (EMA, ATR — single feature path) | `llm/journal.py` (P2 trade journal) |
-| `strategy/` base + `ema_cross` (intent-only) | `ui/**` (P3 operator surfaces) |
+| `strategy/` base + `ema_cross` + **shadow (P3 hypothetical P&L)** | `ui/api.py` FastAPI/SSE transport + market charts/heatmap pixels |
 | `backtest/` runner (+protective stop), metrics, walk-forward, **parity (§8.9)** | `strategy/shadow.py` (P2/P3) |
 | `risk/**` FULL engine R0–R7 + sentiment size-multiplier (tighten-only) | — |
 | `execution/**` broker, stops, reconcile, convergence (E1–E4) | — |
 | `llm/` sentiment (P1, inert at FLOOR=1.0) + orchestrator + Ollama backend + **journal + hypothesis_gen (P2)** | — |
 | `backtest/` **multiple_testing (deflated Sharpe) + hypothesis (validate_hypothesis)** (P2 §5) | — |
+| `ui/` **preview (manual-order risk preview, Inv 9) + dashboard/model (read-only §12 view)** | — |
 | `events/log` (append-only, secret-redacted) · `core/` (config hash-lock, secrets, clock, console) | — |
 | `fast_loop.py` (the §3 keystone, sentiment-wired) · `dry_run.py` (paper CLI, `--sentiment-state`) | — |
 
@@ -103,8 +105,13 @@ python scripts/dryrun_parity.py --exchange bitbank --pair BTC/JPY --days 30
    (offline proposer, human-gated, strict param budget). Remaining (operational): run the proposer
    → **a human approves each** → `validate_hypothesis` on real bitbank BTC/JPY → clear the gate
    with ≥1 net-of-cost+tax validated edge that survives the §5 correction.
-4. **Then P3:** `strategy/shadow.py`, `ui/**` operator dashboard, and reintroduce Freqtrade for
-   dry-run fill parity.
+4. **P3 (monitor/orchestrate) — deterministic cores BUILT & tested.** `strategy/shadow.py`
+   (`ShadowBook`), `ui/preview.py` (`preview_manual_order`, runs the exact engine — Inv 9),
+   `ui/dashboard/model.py` (`build_dashboard`, read-only §12 view). Remaining: **(a) UI delivery**
+   — wrap these in `ui/api.py` (FastAPI + SSE) + market charts/heatmap pixels; **(b) the gate
+   itself (operational)** — a **≥30-day continuous dry-run** on bitbank BTC/JPY (no crash),
+   `dryrun_parity` green, and **restart-safety** verified (kill mid-trade → clean reconcile, no
+   double-trade, §9). Then reintroduce Freqtrade for dry-run fill parity.
 5. **Never skip a gate; the kill-switch is sacred; no real capital before the §14 checklist.**
 
 ## Hardware

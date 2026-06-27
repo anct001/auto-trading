@@ -319,6 +319,19 @@ Built the deterministic anti-data-snooping core of P2 (§5), all tested without 
 - Full suite **313→343 passed**, ruff clean. **Remaining (operational):** run proposer → human
   approves → validate on real bitbank BTC/JPY → clear gate with ≥1 net-of-cost+tax validated edge.
 
+### 2026-06-27 (local session, cont.) — P3 deterministic cores BUILT
+Built the testable cores of P3 (last paper gate), no web deps, all TDD:
+- `strategy/shadow.py` `ShadowBook` — hypothetical P&L from a strategy's intents, never trades;
+  long-or-flat; fills at mark (optimistic §2) → relative promotion screen.
+- `ui/preview.py` `preview_manual_order` — runs the EXACT `risk.engine.validate` (Inv 9, no UI
+  backdoor); verdict == engine; bad input fails closed; + exposure/daily metrics for badges.
+- `ui/dashboard/model.py` `build_dashboard` — read-only §12 view: equity, P&L vs soft/hard daily
+  limits, drawdown vs kill-switch, gross+per-asset exposure, positions w/ unrealized, kill-switch
+  status, slow-loop freshness, decision-log "why" from the event log.
+- Full suite **343→361 passed**, ruff clean. **Remaining:** FastAPI/SSE transport + market
+  charts/heatmap pixels (`ui/api.py`); and the operational gate — ≥30-day continuous dry-run on
+  bitbank BTC/JPY (no crash) + signal-parity + restart-safety (§9).
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.
@@ -356,6 +369,6 @@ first slice. Next: write `PLAN.md` (slices, each with a proof command), then bui
 | P0 data harness | **code proven on real venue; awaiting operator's bitbank account close** | §8 proven |
 | P1 LLM sentiment feature | **built + tested, inert at FLOOR=1.0; awaiting Ollama + ablation** | forward-validated ablation |
 | P2 hypothesis generation | **validation machinery built + tested; awaiting Ollama + human-approved validated edge** | ≥1 LLM strategy walk-forward validated |
-| P3 monitor/orchestrate | not started | ≥30d dry-run, signal metrics ≈ backtest |
+| P3 monitor/orchestrate | **deterministic cores built (shadow, risk-preview, dashboard model); awaiting UI transport + ≥30d dry-run** | ≥30d dry-run, signal metrics ≈ backtest |
 | P4 tiny real capital | not started | §14 go-live checklist + human sign-off |
 | P5 scale | not started | sustained live perf + capacity + sign-off |
