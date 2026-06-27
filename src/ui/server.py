@@ -32,11 +32,12 @@ class OperatorContext:
     preview: Callable[[dict], dict]        # body -> preview_payload(...)
     killswitch: KillSwitch
     markets: Callable[[], dict] | None = None  # () -> {"overview": [...], "heatmap": [...]}
-    coin: Callable[[str], dict] | None = None  # pair -> coin_detail payload
+    coin: Callable[..., dict] | None = None    # (pair, tf) -> coin_detail payload
     orders: Callable[[], dict] | None = None   # () -> {"attempts", "submitted", "fills"}
     place: Callable[[dict], dict] | None = None  # body -> place a manual order (Inv 9); None = disabled
     orderbook: Callable[[str], dict] | None = None  # pair -> order-book depth view
     agentview: Callable[[str], dict] | None = None  # pair -> agent-view overlay (signal/regime/sentiment)
+    trades_tape: Callable[[str], dict] | None = None  # pair -> recent public market trades (tape)
 
 
 @dataclass(frozen=True)
@@ -66,7 +67,14 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
         pair = (query.get("pair") or [""])[0]
-        return Response(200, ctx.coin(pair) if ctx.coin else {})
+        tf = (query.get("tf") or [""])[0]
+        return Response(200, ctx.coin(pair, tf) if ctx.coin else {})
+
+    if path == "/api/trades":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        pair = (query.get("pair") or [""])[0]
+        return Response(200, ctx.trades_tape(pair) if ctx.trades_tape else {"trades": []})
 
     if path == "/api/orderbook":
         if method != "GET":
@@ -283,14 +291,16 @@ def terminal_html() -> str:
  <span>pair <input id="pair" value="BTC/JPY"><button onclick="setPair()">go</button>
  · <a href="/">classic</a> <a href="/markets">markets</a> <a href="/orders">orders</a>
  <button class="bad" onclick="engage()">KILL</button></span></div>
-<div class="grid">
- <div class="tile" style="grid-column:span 12" id="kpis"></div>
- <div class="tile" style="grid-column:span 3" id="watch"><div class="t">Watchlist</div><table><tbody></tbody></table></div>
- <div class="tile" style="grid-column:span 6"><div class="t">Chart · <span id="cpair"></span></div><svg id="chart" viewBox="0 0 600 300"></svg></div>
- <div class="tile" style="grid-column:span 3"><div class="t">Order book <span id="spread" class="mut"></span></div><svg id="depth" viewBox="0 0 300 120"></svg><table id="ob"><tbody></tbody></table></div>
- <div class="tile" style="grid-column:span 4"><div class="t">Heatmap (24h)</div><div id="heat"></div></div>
- <div class="tile" style="grid-column:span 4"><div class="t">Positions</div><table id="pos"><tbody></tbody></table></div>
- <div class="tile" style="grid-column:span 4"><div class="t">Agent view</div><div id="agent"></div><div class="t" style="margin-top:8px">Decision log</div><div id="log" style="font-size:11px"></div></div>
+<div class="t mut" style="margin-bottom:4px">tiles are draggable — drag to rearrange (order saved)</div>
+<div class="grid" id="grid">
+ <div class="tile" data-tid="kpis" style="grid-column:span 12" id="kpis"></div>
+ <div class="tile" data-tid="watch" style="grid-column:span 3" id="watch"><div class="t">⠿ Watchlist</div><table><tbody></tbody></table></div>
+ <div class="tile" data-tid="chart" style="grid-column:span 6"><div class="t">⠿ Chart · <span id="cpair"></span> <span id="tfbtns"></span></div><svg id="chart" viewBox="0 0 600 300"></svg></div>
+ <div class="tile" data-tid="book" style="grid-column:span 3"><div class="t">⠿ Order book <span id="spread" class="mut"></span></div><svg id="depth" viewBox="0 0 300 120"></svg><table id="ob"><tbody></tbody></table></div>
+ <div class="tile" data-tid="tape" style="grid-column:span 3"><div class="t">⠿ Trades (tape)</div><table id="tape"><tbody></tbody></table></div>
+ <div class="tile" data-tid="heat" style="grid-column:span 3"><div class="t">⠿ Heatmap (24h)</div><div id="heat"></div></div>
+ <div class="tile" data-tid="pos" style="grid-column:span 3"><div class="t">⠿ Positions</div><table id="pos"><tbody></tbody></table></div>
+ <div class="tile" data-tid="agent" style="grid-column:span 3"><div class="t">⠿ Agent view</div><div id="agent"></div><div class="t" style="margin-top:8px">Decision log</div><div id="log" style="font-size:11px"></div></div>
 </div>
 <script>
 const NS="http://www.w3.org/2000/svg",C={ok:"#3fd07f",bad:"#f06a6a",warn:"#e6a23c"};
@@ -299,7 +309,10 @@ document.getElementById("pair").value=PAIR;
 const f=(n,d=2)=>n==null?"—":Number(n).toLocaleString(undefined,{maximumFractionDigits:d});
 const j=async u=>{try{return await (await fetch(u)).json();}catch(e){return null;}};
 function el(t,a){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;}
-function setPair(){PAIR=document.getElementById("pair").value.toUpperCase();history.replaceState(0,"","?pair="+encodeURIComponent(PAIR));renderCoin();}
+function setPair(){PAIR=document.getElementById("pair").value.toUpperCase();history.replaceState(0,"","?pair="+encodeURIComponent(PAIR));renderCoin();renderTape();}
+async function renderTape(){const d=await j("/api/trades?pair="+encodeURIComponent(PAIR));const rows=(d&&d.trades)||[];
+ document.querySelector("#tape tbody").innerHTML=rows.map(t=>
+  `<tr><td class=mut>${t.time}</td><td class="${t.side==='sell'?'bad':'ok'}">${f(t.price)}</td><td>${f(t.amount,4)}</td></tr>`).join("")||'<tr><td class=mut>no trades</td></tr>';}
 async function engage(){await fetch("/api/killswitch/engage",{method:"POST"});renderDash();}
 async function flatten(p,q,pr){if(!confirm("Flatten "+p+"?"))return;await fetch("/api/order",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({side:"sell",pair:p,qty:q,price:pr})});renderDash();}
 function renderDash(d){ if(!d){return j("/api/dashboard").then(renderDash);}
@@ -325,8 +338,12 @@ async function renderMarkets(){const m=await j("/api/markets");if(!m)return;
  document.getElementById("heat").innerHTML=tiles.map(t=>{const c=t.change_pct>=0?C.ok:C.bad;
   return `<div class="hx" style="flex-grow:${Math.max(1,(t.size||0)/mx*5)};background:${c}">${t.pair.split('/')[0]}<br>${f(t.change_pct,1)}%</div>`;}).join("");
 }
-async function renderCoin(){document.getElementById("cpair").textContent=PAIR;
- const d=await j("/api/coin?pair="+encodeURIComponent(PAIR));const c=(d&&d.candles)||[];
+let TF="";const TFS=["1h","4h","1d"];
+function renderTfBtns(){document.getElementById("tfbtns").innerHTML=TFS.map(t=>
+ `<button onclick="setTF('${t}')" style="padding:1px 6px;${t===(TF||TFS[0])?'border-color:#6ea8fe;color:#6ea8fe':''}">${t}</button>`).join(" ");}
+function setTF(t){TF=t;renderCoin();}
+async function renderCoin(){renderTfBtns();document.getElementById("cpair").textContent=PAIR+(TF?(" · "+TF):"");
+ const d=await j("/api/coin?pair="+encodeURIComponent(PAIR)+(TF?("&tf="+encodeURIComponent(TF)):""));const c=(d&&d.candles)||[];
  const svg=document.getElementById("chart");svg.innerHTML="";const W=600,H=300,pad=4,vh=60,ch=H-vh-pad;
  if(c.length<2){svg.appendChild(el("text",{x:8,y:20,fill:"#5f6b7a"}));svg.lastChild.textContent="no data";return;}
  const lo=Math.min(...c.map(k=>k.l)),hi=Math.max(...c.map(k=>k.h)),vmax=Math.max(...c.map(k=>k.v||0));
@@ -354,8 +371,19 @@ async function renderAgent(){const a=await j("/api/agentview?pair="+encodeURICom
  const act=a.acting?'<b class=ok>ACTING</b>':'<span class=mut>idle</span>';
  e.innerHTML=`signal <b>${a.signal||"?"}</b> · ${act} ${(a.blocked_by||[]).length?'· '+a.blocked_by.join(", "):""}<br>regime ${a.regime_enabled?'on':'OFF'} · sentiment×${f(a.sentiment_haircut??1,2)} · ${a.killswitch_engaged?'<b class=bad>KILLED</b>':'armed'}`;
 }
-renderDash();renderMarkets();renderCoin();
-setInterval(()=>{renderMarkets();renderCoin();},6000);
+function applyOrder(){const o=JSON.parse(localStorage.getItem("tileorder")||"[]");const g=document.getElementById("grid");
+ o.forEach(tid=>{const e=g.querySelector('[data-tid="'+tid+'"]');if(e)g.appendChild(e);});}
+function enableDrag(){const g=document.getElementById("grid");let drag=null;
+ g.querySelectorAll(".tile").forEach(t=>{t.draggable=true;
+  t.addEventListener("dragstart",()=>{drag=t;});
+  t.addEventListener("dragover",e=>{e.preventDefault();const tg=e.currentTarget;
+   if(drag&&drag!==tg){const r=tg.getBoundingClientRect();
+    g.insertBefore(drag,(e.clientY-r.top)/r.height<0.5?tg:tg.nextSibling);}});
+  t.addEventListener("drop",e=>{e.preventDefault();
+   localStorage.setItem("tileorder",JSON.stringify([...g.children].map(c=>c.dataset.tid)));});});}
+applyOrder();enableDrag();
+renderDash();renderMarkets();renderCoin();renderTape();
+setInterval(()=>{renderMarkets();renderCoin();renderTape();},6000);
 try{const es=new EventSource("/api/stream");es.onmessage=ev=>{try{renderDash(JSON.parse(ev.data));}catch(_){}};}catch(_){ setInterval(renderDash,5000);}
 </script></body></html>"""
 
@@ -608,11 +636,21 @@ def build_demo_context() -> OperatorContext:
         overview = build_markets_overview(_universe(), lookback=24)
         return {"overview": overview, "heatmap": heatmap_tiles(overview)}
 
-    def _coin(p: str) -> dict:
+    def _coin(p: str, tf: str = "") -> dict:
         from src.ui.coin_detail import build_coin_detail
         uni = _universe()
         name = p if p in uni else next(iter(uni))
-        return build_coin_detail(name, uni[name])
+        out = build_coin_detail(name, uni[name])
+        out["timeframe"] = tf or "1h"  # demo: same series for any timeframe
+        return out
+
+    def _trades_tape(p: str) -> dict:
+        from src.ui.trades_feed import format_trades
+        base = price
+        raw = [{"timestamp": (1_700_000 + i) * 1000, "price": base + (i % 7 - 3) * 1000,
+                "amount": 0.01 * (1 + i % 5), "side": "buy" if i % 2 else "sell"}
+               for i in range(40)]
+        return {"trades": format_trades(raw)}
 
     def _agentview(p: str) -> dict:
         if p != pair:
@@ -671,6 +709,7 @@ def build_demo_context() -> OperatorContext:
         orders=_orders,
         orderbook=_orderbook,
         agentview=_agentview,
+        trades_tape=_trades_tape,
     )
 
 

@@ -107,9 +107,9 @@ def test_demo_markets_provider_works():
 
 def test_coin_api_uses_query_pair():
     ctx = _ctx()
-    ctx.coin = lambda pair: {"pair": pair, "candles": [], "overlays": {}, "readouts": {}}
-    r = handle_request("GET", "/api/coin?pair=BTC%2FJPY", None, ctx)
-    assert r.status == 200 and r.body["pair"] == "BTC/JPY"
+    ctx.coin = lambda pair, tf="": {"pair": pair, "tf": tf, "candles": [], "overlays": {}, "readouts": {}}
+    r = handle_request("GET", "/api/coin?pair=BTC%2FJPY&tf=4h", None, ctx)
+    assert r.status == 200 and r.body["pair"] == "BTC/JPY" and r.body["tf"] == "4h"
 
 
 def test_coin_api_empty_when_unconfigured():
@@ -196,13 +196,31 @@ def test_terminal_page_tiles_all_surfaces():
     r = handle_request("GET", "/terminal", None, _ctx())
     assert r.status == 200 and r.content_type.startswith("text/html")
     # one dense grid page that pulls every read API + the two writes
-    for api in ("/api/dashboard", "/api/markets", "/api/coin", "/api/orderbook",
+    for api in ("/api/dashboard", "/api/markets", "/api/coin", "/api/orderbook", "/api/trades",
                 "/api/agentview", "/api/stream", "/api/order", "/api/killswitch/engage"):
         assert api in r.body
-    for tile in ("Watchlist", "Heatmap", "Order book", "Positions", "Agent view"):
+    for tile in ("Watchlist", "Heatmap", "Order book", "Positions", "Agent view", "Trades (tape)"):
         assert tile in r.body
+    # the 3 additions: tape, timeframe buttons, drag-drop
+    for marker in ("renderTape", "setTF", "TFS", "enableDrag", "tileorder", "draggable"):
+        assert marker in r.body
     # self-contained: only the SVG namespace is external
     assert "http" not in r.body.replace("http://www.w3.org/2000/svg", "")
+
+
+def test_trades_api_and_empty_default():
+    ctx = _ctx()
+    ctx.trades_tape = lambda pair: {"trades": [{"time": "00:00:01", "price": 1.0, "amount": 2.0, "side": "buy"}]}
+    r = handle_request("GET", "/api/trades?pair=BTC%2FJPY", None, ctx)
+    assert r.status == 200 and r.body["trades"][0]["side"] == "buy"
+    assert handle_request("GET", "/api/trades?pair=X", None, _ctx()).body == {"trades": []}
+
+
+def test_demo_trades_tape_and_tf_coin():
+    from src.ui.server import build_demo_context
+    ctx = build_demo_context()
+    assert len(ctx.trades_tape("BTC/JPY")["trades"]) > 0
+    assert ctx.coin("BTC/JPY", "4h")["timeframe"] == "4h"  # timeframe echoed
 
 
 def test_coin_page_has_agentview_panel():

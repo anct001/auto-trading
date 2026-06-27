@@ -60,13 +60,37 @@ def build_live_context(runner) -> OperatorContext:
         from src.ui.orders_panel import build_order_trade_panel
         return build_order_trade_panel(runner.loop.events.read_all())
 
-    def _coin(p: str) -> dict:
+    def _coin(p: str, tf: str = "") -> dict:
+        from src.data import feed
         from src.ui.coin_detail import build_coin_detail
-        df = runner.current_frame()
-        if p != runner.pair or df is None or len(df) == 0:
-            return {"pair": p, "candles": [], "overlays": {"ema_fast": [], "ema_slow": []},
-                    "readouts": {}}
-        return build_coin_detail(runner.pair, df)
+        empty = {"pair": p, "candles": [], "overlays": {"ema_fast": [], "ema_slow": []},
+                 "readouts": {}, "timeframe": tf or runner.timeframe}
+        if p != runner.pair:
+            return empty
+        tf = tf or runner.timeframe
+        if tf == runner.timeframe:
+            df = runner.current_frame()  # pre-warmed deep buffer for the traded timeframe
+        else:
+            try:  # other timeframes: pull fresh history (fail-soft so the UI never breaks)
+                now = runner.data_exchange.milliseconds()
+                since = now - 250 * feed.timeframe_to_ms(tf)
+                df = feed.fetch_ohlcv_history(runner.data_exchange, p, tf, since_ms=since,
+                                              page_limit=runner.limit, now_ms=now)
+            except Exception:
+                df = None
+        if df is None or len(df) == 0:
+            return empty
+        out = build_coin_detail(runner.pair, df)
+        out["timeframe"] = tf
+        return out
+
+    def _trades_tape(p: str) -> dict:
+        from src.ui.trades_feed import format_trades
+        try:
+            raw = runner.data_exchange.fetch_trades(p or runner.pair)
+        except Exception:
+            return {"trades": []}
+        return {"trades": format_trades(raw)}
 
     def _markets() -> dict:
         from src.ui.markets import build_markets_overview, heatmap_tiles
@@ -117,4 +141,4 @@ def build_live_context(runner) -> OperatorContext:
 
     return OperatorContext(dashboard=_dashboard, preview=_preview, killswitch=runner.killswitch,
                            orders=_orders, place=_place, orderbook=_orderbook, agentview=_agentview,
-                           coin=_coin, markets=_markets)
+                           coin=_coin, markets=_markets, trades_tape=_trades_tape)
