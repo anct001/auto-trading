@@ -6,8 +6,8 @@
 
 ## Where things stand
 
-- **Branch:** `claude/new-session-vcxyyp` · **Phase:** P0 (not closed) · **Tests:** 248 passing,
-  `ruff` clean. Everything is committed and pushed.
+- **Branch:** `claude/new-session-vcxyyp` · **Phase:** P0 (not closed) · **Tests:** 254 passing,
+  `ruff` clean. Everything is committed (local; push when a remote is configured).
 - **What this is:** a solo-operator, paper-first, phase-gated crypto trading system. Deterministic
   engine makes every trade; a local LLM (later) is an out-of-loop researcher only.
 
@@ -45,10 +45,14 @@ fails closed not crash (#5), non-positive stop rejected (#6), idempotency-on-res
 
 ## ⚠️ Environment caveats for local mode
 
-- **Binance is geo-blocked from the cloud build env (HTTP 451).** On your **local machine /
-  static-IP VPS** you should be able to reach Binance Japan — that's where the real P0 close
-  happens. The provisional data demo uses **Kraken** (`scripts/first_real_backtest.py`,
-  `dry_run.py --data-exchange kraken`).
+- **Binance is geo-blocked from the cloud build env (HTTP 451).** Confirmed (2026-06-27) that
+  the **operator's local Windows machine CAN reach** Binance/Bybit/OKX/KuCoin/Coinbase — no 451.
+  That's where the real P0 close happens. The provisional harness now uses **Bybit** (deep
+  history, non-Binance per ADR 0002) in `scripts/first_real_backtest.py`; `dry_run.py` still
+  defaults to Kraken but accepts `--data-exchange`. **Kraken public OHLC caps at ~720 candles** —
+  fine for a dry-run tick, too few for a backtest sample.
+- **This console is cp1258 (Vietnamese), not UTF-8.** CLIs call `core.console.force_utf8_stdio()`
+  so non-ASCII output (§, →, —) doesn't crash; any new printing entrypoint must do the same.
 - **Unverified:** confirm **BTC/USDT is listed on Binance Japan** (its primary quote is JPY); if
   not, fall back to **BTC/JPY**. Confirm KYC/ToS allow API/bot spot trading (§11).
 - **No keys are needed** for tests or the demos. Real keys → P4 only, in a git-ignored `.env`.
@@ -65,10 +69,14 @@ python -m src.dry_run --data-exchange kraken --pair BTC/USDT --timeframe 1h --it
 
 ## Recommended next steps (in order)
 
-1. **Close P0 — operational, not code:** run `dry_run.py --iterations 0` (or a real backtest) on
-   your venue from a network that can reach it, with enough history for a **≥100-trade,
-   multi-regime** sample; compare dry-run signal metrics to backtest (§8.9). Verify BTC/USDT on
-   Binance Japan.
+1. **Close P0 — now mostly operational.** The code path is proven: `first_real_backtest.py`
+   pulls ~21.6k real candles (Bybit) → quality gate → reproducible **366-trade** backtest →
+   walk-forward (sample gate TRUE). Remaining is the operator's actual venue: **(a)** verify
+   BTC/USDT is listed on **Binance Japan** (else BTC/JPY) + KYC/ToS allow API spot bots (§11);
+   **(b)** re-run the backtest on that venue's data with the **real fee tier** (§8.3); **(c)** a
+   **≥30-day forward dry-run** (`dry_run.py --iterations 0`) and compare its signal metrics to the
+   backtest (§8.9). Note: a *dumb* EMA-cross shows **no edge** on real 2.5y data — P0 closure is
+   about a proven pipeline/sample, not this strategy's P&L.
 2. **Then P1 (LLM, optional):** wire `llm/**` sentiment as a **bounded size-haircut, FLOOR=1.0**,
    forward-validated via ablation (§6). Needs Ollama (see `ops/HARDWARE.md`).
 3. **Then P3:** `ui/**` operator dashboard + `strategy/shadow.py`, and reintroduce Freqtrade for

@@ -238,7 +238,8 @@ unprotectable position. Low: **#8** `re_arm` now requires an operator identity; 
 detects partial (not just absent) stop coverage; **#11** sizing rejects non-positive price, loop
 uses an epsilon for "flat". **#7** (in-memory idempotency) documented — cross-restart relies on a
 deterministic client id + reconcile (persist deferred to P4). **#12** (exits skip exchange-assert,
-intentional for flatten) and **#13** (feed pagination, a feature gap) left as conscious notes.
+intentional for flatten) left as a conscious note. **#13** (feed pagination) — **CLOSED** in the
+2026-06-27 local session (`feed.fetch_ohlcv_history`).
 Full suite **244 passed**, ruff clean.
 
 ### 2026-06-27 — paper dry-run CLI (`src/dry_run.py`)
@@ -248,11 +249,30 @@ the process), each tick appended to the event log. `PaperAccount` tracks paper e
 and updates from fills. run_once() is the testable unit (4 tests, fakes, no network); run()/main()
 add the sleep loop + CLI. Smoke-tested live against Kraka data (1 tick → hold). Full suite **248 passed**, ruff clean.
 
+### 2026-06-27 (local session) — UTF-8 stdio fix, feed pagination (#13), harness clears sample gate
+Three things, all on the operator's local Windows machine (which — unlike the cloud env that
+wrote HANDOFF — **can reach Binance/Bybit/OKX, no HTTP 451**).
+- **UTF-8 stdio (`src/core/console.py`):** the console here is **cp1258 (Vietnamese)**, so a bare
+  `print("→")` raised `UnicodeEncodeError` and crashed `dry_run.py` + `first_real_backtest.py`
+  mid-run. `force_utf8_stdio()` (display-only) wired into both entrypoints. +2 tests.
+- **Feed pagination (#13 closed):** `feed.fetch_ohlcv_history()` loops `fetch_ohlcv` advancing
+  `since`, de-dupes by timestamp, stops on no forward progress. +4 tests. Probed venues: Bybit/
+  OKX/Binance/KuCoin/Coinbase all serve multi-year 1h; **Kraken caps at ~720** (that was the old
+  720-trade ceiling, not our bug).
+- **Harness now clears the ≥100-trade gate:** `first_real_backtest.py` switched Kraken→**Bybit**
+  (deep-history, non-Binance per ADR 0002). Real run: **21,597 clean candles** (2 spikes
+  quarantined, 2024-01..2026-06), reproducible backtest **366 trades** (sample gate TRUE),
+  walk-forward **212 folds / 499 OOS**. EMA-cross posts **negative** metrics (ret −22%, Sharpe
+  −0.88) under costs — the harness correctly showing **no edge**; not an edge claim, not the real
+  P0 close. Full suite **254 passed**, ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.
 - **Operational (not code):** the real P0 close — real venue (Binance Japan, reachable env) +
-  ≥100-trade multi-regime sample + ≥30-day forward dry-run.
+  ≥100-trade multi-regime sample + ≥30-day forward dry-run. Code path is now proven on real
+  multi-regime data (Bybit harness); remaining work is the operator's actual venue + KYC/ToS +
+  the live forward dry-run.
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 
