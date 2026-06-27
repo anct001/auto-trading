@@ -387,7 +387,13 @@ real bitbank (strict-JSON safe). Then added the requested nice-to-haves: **SSE p
 (`GET /api/stream` + EventSource, poll fallback), **agent-view overlay** on the coin page
 (`/api/agentview` — signal/acting/blocked/regime/sentiment/position), **flatten button** per
 position (force-exit through the risk engine, Inv 9), and a **light/dark theme toggle**. Verified
-live on bitbank. Full suite **462**. **Remaining (UI):** only drag-drop layout (low value).
+live on bitbank. Then, learning from a dense multi-widget trading terminal, added **`/terminal`**:
+a single-screen CSS-grid that tiles every read surface (KPI strip, watchlist, heatmap, candles
+**with volume bars** + EMA, order-book ladder + depth chart, positions w/ flatten, agent-view +
+decision log) over the existing JSON APIs, SSE-driven. Also fixed a real gap — `build_live_context`
+never wired the coin/markets providers, so `/coin`, `/markets`, and the terminal were blank on a
+LIVE run; now sourced from the runner's live frame. Verified live on bitbank (200 candles+volume,
+watchlist, 15×15 order book). Full suite **464**. **Remaining (UI):** only drag-drop layout.
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
