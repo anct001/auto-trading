@@ -197,9 +197,27 @@ clean. Remaining: when CodeGraph is rebuilt, confirm the graph shows every order
 
 ### Review recommendations #1–#3 — DONE
 (1) execution E1–E4 complete; (2) config hash-lock live (§15); (3) harness validated on real
-data. **Full suite: 210 passed**, ruff clean. Remaining big gaps: `core/{secrets,clock}` stubs,
-`llm/**`, `ui/**`, `strategy/shadow`, and the real P0 close (real venue + ≥100-trade sample +
-dry-run).
+data. Remaining big gaps below.
+
+### 2026-06-27 — core foundations complete (§9 + §10)
+- `src/core/secrets.py` (§10): `Secret` wrapper whose repr/str/format are masked (logging or
+  event-logging a secret yields "***"; value only via explicit `.reveal()`); `load_secret`
+  (raises `MissingSecretError`), `load_optional`, `mask`. 8 tests.
+- `src/core/clock.py` (§9): `check_skew`/`assert_clock_sane` (injected reference source) raise
+  `ClockSkewError` beyond tolerance — skew is a circuit breaker, never trade on a skewed clock;
+  `now_ms`. 7 tests.
+- **Proof:** `pytest tests/core/` → 22 passed. Full suite: **225 passed**, ruff clean.
+- **core/ is now fully implemented** (config hash-lock + secrets + clock). Remaining stubs:
+  `features/cache.py`, `llm/**`, `strategy/shadow.py`, `ui/api.py`.
+
+### What's left (none of it is P0 money-code logic anymore)
+- **The keystone not yet built:** a **fast-loop orchestrator** (§3) composing data → quality →
+  features → strategy → sizing → risk → broker → stops → reconcile → event log into one
+  deterministic tick. All the pieces exist and are tested in isolation; this wires them (and the
+  event log) together. Proposed next.
+- **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`.
+- **Operational (not code):** the real P0 close — real venue + ≥100-trade multi-regime sample +
+  ≥30-day dry-run.
 
 ## ORIENT decisions (§7 — being filled in with the operator)
 
