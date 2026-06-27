@@ -149,7 +149,7 @@ def index_html() -> str:
 <title>Operator dashboard</title>
 <style>
  body{font:14px system-ui,sans-serif;background:#0f1115;color:#d7dbe0;margin:0;padding:16px}
- h1{font-size:16px;margin:0 0 12px} .grid{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px}
+ h1{font-size:16px;margin:0 0 12px} a{color:#6ea8fe} .grid{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px}
  .card{background:#171a21;border:1px solid #232833;border-radius:8px;padding:12px;min-width:150px}
  .lbl{color:#8b93a1;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
  .val{font-size:20px;margin-top:4px} .ok{color:#46d17f} .warn{color:#e6a23c} .bad{color:#f06a6a}
@@ -158,7 +158,7 @@ def index_html() -> str:
  button.kill{background:#5a1f24;border-color:#7a2a30} #log div{font-family:monospace;font-size:12px;color:#9aa3b2;padding:2px 0}
  .muted{color:#6b7280;font-size:12px}
 </style></head><body>
-<h1>Operator dashboard <span id="ks" class="muted"></span></h1>
+<h1>Operator dashboard <a href="/markets">· markets</a> <a href="/orders">· orders</a> <span id="ks" class="muted"></span></h1>
 <div class="grid" id="cards"></div>
 <div class="card" style="min-width:100%"><div class="lbl">Open positions</div><table id="pos"><thead>
 <tr><th>Pair</th><th>Qty</th><th>Value</th><th>Unrealized</th><th>Exposure %</th></tr></thead><tbody></tbody></table></div>
