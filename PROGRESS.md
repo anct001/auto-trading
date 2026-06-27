@@ -393,7 +393,11 @@ a single-screen CSS-grid that tiles every read surface (KPI strip, watchlist, he
 decision log) over the existing JSON APIs, SSE-driven. Also fixed a real gap — `build_live_context`
 never wired the coin/markets providers, so `/coin`, `/markets`, and the terminal were blank on a
 LIVE run; now sourced from the runner's live frame. Verified live on bitbank (200 candles+volume,
-watchlist, 15×15 order book). Full suite **464**. **Remaining (UI):** only drag-drop layout.
+watchlist, 15×15 order book). Then added to the terminal: **scrolling trade tape** (`/api/trades`),
+**multi-timeframe chart** (`/api/coin?tf=`, 1h/4h/1d buttons), and **drag-drop tile reordering**
+(persisted). Verified live on bitbank (tape 30 rows, 1h 200 candles). NOTE: bitbank errors on
+4h/1d via ccxt (fail-soft → "no data"); dense venues serve all timeframes. Full suite **469**.
+**Remaining (UI):** essentially feature-complete for a solo operator.
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
