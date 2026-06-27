@@ -225,6 +225,22 @@ data. Remaining big gaps below.
   per-asset and the engine (correctly) rejects it. Safe (sizing proposes, engine disposes); a
   future tuning could clamp sizing to per-asset to avoid futile rejections.
 
+### 2026-06-27 — security/correctness audit + fixes (all 13 findings)
+Adversarial self-audit of the money code; fixed test-first (red→green). High: **#1** risk caps
+fail-OPEN on missing data → now fail-closed (unknown correlation = correlated; `quote_price`
+required); **#2** the single gate was forgeable (broker trusted any `approved=True`) → engine now
+mints an unforgeable `Approval` capability the broker verifies; **#3** backtest ignored the
+protective stop → now enforces the same stop (gap/intrabar), so realized risk matches the model.
+Medium: **#4** event-log redaction was name-only → now redacts secret *values* (credentialed
+URLs, AIza/AKIA/sk-/ghp_ tokens); **#5** missing price KeyError-crashed the gate → now rejects
+`missing_price` (fail-closed); **#6** protective stop could be ≤0 → rejected, loop won't open an
+unprotectable position. Low: **#8** `re_arm` now requires an operator identity; **#9** reconcile
+detects partial (not just absent) stop coverage; **#11** sizing rejects non-positive price, loop
+uses an epsilon for "flat". **#7** (in-memory idempotency) documented — cross-restart relies on a
+deterministic client id + reconcile (persist deferred to P4). **#12** (exits skip exchange-assert,
+intentional for flatten) and **#13** (feed pagination, a feature gap) left as conscious notes.
+Full suite **244 passed**, ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

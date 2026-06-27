@@ -8,6 +8,13 @@ an explicit time-in-force on resting orders so a stale limit doesn't rot.
 
 The exchange is injected (ccxt-like) so all of this is testable against a mock — no network, no
 real capital. Real fills are only observed at P4 (§2 parity caveat).
+
+Idempotency scope (known limitation): the dedupe cache is in-memory, so it does NOT survive a
+restart. Cross-restart idempotency therefore relies on two things the operator must ensure: (a) a
+*deterministic* client order id (e.g. derived from pair + closed-candle timestamp) so a retried
+order reuses the same id, and (b) restart-time reconciliation (execution/reconcile.py) detecting
+an already-open order before anything is re-submitted. The exchange honoring clientOrderId is the
+final backstop. Persisting the cache is deferred until live trading (P4).
 """
 from __future__ import annotations
 
