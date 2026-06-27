@@ -397,6 +397,10 @@ watchlist, 15×15 order book). Then added to the terminal: **scrolling trade tap
 **multi-timeframe chart** (`/api/coin?tf=`, 1h/4h/1d buttons), and **drag-drop tile reordering**
 (persisted). Verified live on bitbank (tape 30 rows, 1h 200 candles). NOTE: bitbank errors on
 4h/1d via ccxt (fail-soft → "no data"); dense venues serve all timeframes. Full suite **469**.
+Then the coin chart was upgraded to **TradingView Lightweight Charts** (v4.2.3, Apache-2.0,
+**vendored** to `src/ui/static/`, served same-origin at `/static/` — no CDN, no data leaves):
+candles + volume + EMA + crosshair/zoom + tf buttons, over our own `/api/coin`. (TradingView
+*data* APIs were rejected — ToS §11 + reproducibility/ADR 0002.) Full suite **471**.
 **Remaining (UI):** essentially feature-complete for a solo operator.
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
