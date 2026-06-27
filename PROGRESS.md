@@ -328,9 +328,17 @@ Built the testable cores of P3 (last paper gate), no web deps, all TDD:
 - `ui/dashboard/model.py` `build_dashboard` — read-only §12 view: equity, P&L vs soft/hard daily
   limits, drawdown vs kill-switch, gross+per-asset exposure, positions w/ unrealized, kill-switch
   status, slow-loop freshness, decision-log "why" from the event log.
-- Full suite **343→361 passed**, ruff clean. **Remaining:** FastAPI/SSE transport + market
-  charts/heatmap pixels (`ui/api.py`); and the operational gate — ≥30-day continuous dry-run on
-  bitbank BTC/JPY (no crash) + signal-parity + restart-safety (§9).
+- Full suite **343→361 passed**, ruff clean.
+
+### 2026-06-28 (session) — P3 operator HTTP API transport (stdlib)
+`ui/server.py`: dependency-free stdlib-http.server transport over the tested `ui.api` service.
+`handle_request` is a PURE router (unit-tested, no sockets) enforcing the §12 contract — read-only
+by default; only writes are kill-switch (`/api/killswitch/engage|rearm`) + manual-order preview
+(`/api/preview`, exact risk engine, Inv 9); 405 on write-to-read-only, 404 unknown, 400 rearm
+w/o operator. `dashboard_sse_frame` for SSE; `serve()` + `build_demo_context()` + `main()` make
+`python -m src.ui.server` runnable on a paper snapshot (live smoke verified: dashboard equity +
+engage halt). Full suite **376→384**, ruff clean. **Remaining (UI):** market charts/heatmap/
+screener pixels. **Remaining (gate, operational):** ≥30-day dry-run on bitbank + parity + §9 restart-safety.
 
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
