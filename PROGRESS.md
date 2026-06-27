@@ -348,10 +348,14 @@ overview/watchlist + heatmap logic over injected OHLCV — rows, sort, gainers/l
 screener-filterable, volume-proxy heatmap tiles) wired as `GET /api/markets` + a `/markets`
 watchlist+heatmap page; demo serves a 3-pair universe (live smoke OK). Full suite **376→408**,
 ruff clean. The §12 **UI logic is complete** (control dashboard, markets/watchlist/heatmap,
-screener, agent-view, all served by the stdlib transport). **Remaining (UI):** only coin-detail
-K-line / order-book / order-trade-panel pixels (need live order-book + multi-asset feeds), and
-wiring the server to LIVE dry-run state (demo uses a static snapshot). **Remaining (gate,
-operational):** ≥30-day dry-run on bitbank + parity + §9 restart-safety.
+screener, agent-view, all served by the stdlib transport). Then **wired the UI to LIVE dry-run state** (`ui/live.py build_live_context` + `DryRunner.marks()`/
+`snapshot_state()` + `dry_run.py --serve-ui`): the dashboard reflects the actual paper portfolio,
+the preview runs the real engine over live state (Inv 9), and the UI kill-switch IS the loop's
+(engage halts the live loop). Read-only, never blocks the loop (Inv 2). Verified end-to-end (after
+a paper entry: position + fee-adjusted equity + decision log on the live HTTP dashboard).
+Full suite **412**. **Remaining (UI):** only coin-detail K-line / order-book / order-panel pixels
+(need live order-book feeds). **Remaining (gate, operational):** ≥30-day dry-run on bitbank +
+parity + §9 restart-safety; Freqtrade fill-parity.
 
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
