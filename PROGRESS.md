@@ -383,8 +383,11 @@ drawdown / gross vs soft/hard/cap); **performance summary** (`ui/performance.py`
 profit factor [None=∞, JSON-safe — float('inf') breaks browser JSON.parse], expectancy, total
 P&L, best/worst); **closed-trades table** (`DryRunner` records round-trips on every sell); **bot
 health** (tick_count/last_tick). All wired live (`dry_run.py --serve-ui`) + demo; verified live on
-real bitbank (strict-JSON safe). Full suite **456**. **Remaining (UI):** nice-to-haves — SSE push
-instead of poll, agent-view overlay on the coin chart, drag-drop layout, theme.
+real bitbank (strict-JSON safe). Then added the requested nice-to-haves: **SSE push**
+(`GET /api/stream` + EventSource, poll fallback), **agent-view overlay** on the coin page
+(`/api/agentview` — signal/acting/blocked/regime/sentiment/position), **flatten button** per
+position (force-exit through the risk engine, Inv 9), and a **light/dark theme toggle**. Verified
+live on bitbank. Full suite **462**. **Remaining (UI):** only drag-drop layout (low value).
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
