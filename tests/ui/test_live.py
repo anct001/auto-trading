@@ -95,6 +95,36 @@ def test_orders_panel_reflects_live_events(tmp_path):
     assert any(a["approved"] for a in o["attempts"])
 
 
+def test_manual_place_routes_through_engine_and_fills(tmp_path):
+    runner = _runner(tmp_path, [INTENT_HOLD])
+    runner.run_once()  # establish a mark; strategy holds so no bot position
+    ctx = build_live_context(runner)
+    res = ctx.place({"side": "buy", "qty": 0.001, "price": 10000.0})
+    assert res["placed"] is True and res["filled"] > 0
+    # the manual order opened a real paper position, recorded with source=manual
+    assert runner.account.positions  # position now held
+    types = [e.type for e in runner.loop.events.read_all()]
+    assert "RiskPassed" in types and "OrderSubmitted" in types and "FillReceived" in types
+    # the manual fill shows up in the order/trade panel
+    assert build_live_context(runner).orders()["fills"]
+
+
+def test_manual_place_blocked_by_killswitch_is_not_filled(tmp_path):
+    runner = _runner(tmp_path, [INTENT_HOLD])
+    runner.run_once()
+    runner.killswitch.manual_kill()
+    res = build_live_context(runner).place({"side": "buy", "qty": 0.001, "price": 10000.0})
+    assert res["placed"] is False and res["filled"] == 0.0
+    assert any("killswitch" in r for r in res["reasons"])
+    assert not runner.account.positions  # nothing opened
+
+
+def test_manual_place_bad_input_fails_closed(tmp_path):
+    runner = _runner(tmp_path, [INTENT_HOLD])
+    res = build_live_context(runner).place({"side": "buy", "qty": 0.0, "price": 10000.0})
+    assert res["placed"] is False and any("invalid_order" in r for r in res["reasons"])
+
+
 def test_killswitch_is_shared_with_the_loop(tmp_path):
     runner = _runner(tmp_path, [INTENT_HOLD])
     ctx = build_live_context(runner)

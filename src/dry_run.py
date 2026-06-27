@@ -14,19 +14,20 @@ loop; `main()` wires a real ccxt data feed + a paper exchange. Run:  ``python -m
 from __future__ import annotations
 
 import argparse
+import threading
 import time
 from dataclasses import dataclass, field
 
 from backtest.runner import Costs
 from src.data import feed
-from src.events.log import EventLog
+from src.events.log import FILL_RECEIVED, ORDER_SUBMITTED, EventLog, log_risk_decision
 from src.execution.broker import Broker
 from src.execution.stops import StopManager
 from src.fast_loop import FastLoop, TickResult
 from src.risk.config import RiskConfig
 from src.risk.killswitch import KillSwitch
 from src.risk.sizing import MarketConstraints
-from src.risk.types import PortfolioState, Position
+from src.risk.types import Order, PortfolioState, Position
 
 _GOOD_EXCHANGE = {"spot_mode": True, "leverage": 1, "margin_disabled": True,
                   "futures_disabled": True, "reduce_only_on_exit": True}
@@ -108,6 +109,9 @@ class DryRunner:
         self.limit = limit
         self.killswitch = killswitch or KillSwitch()
         self.last_prices: dict[str, float] = {}  # latest closed-candle mark per pair (for the UI)
+        # serializes paper-account mutations between the loop thread and a UI manual order
+        self._lock = threading.Lock()
+        self._manual_seq = 0
 
     def run_once(self, *, now_ms: int | None = None) -> TickResult | None:
         """Fetch the latest closed candles, run one tick, and update the paper account."""
@@ -128,12 +132,13 @@ class DryRunner:
 
         if result.submit is not None and result.submit.filled > 0 and result.decision is not None:
             order = result.decision.sized
-            if result.action == "enter":
-                self.account.apply_buy(order.pair, result.submit.filled, order.price,
-                                       self.costs.taker_fee)
-            elif result.action == "exit":
-                self.account.apply_sell(order.pair, result.submit.filled, order.price,
-                                        self.costs.taker_fee)
+            with self._lock:
+                if result.action == "enter":
+                    self.account.apply_buy(order.pair, result.submit.filled, order.price,
+                                           self.costs.taker_fee)
+                elif result.action == "exit":
+                    self.account.apply_sell(order.pair, result.submit.filled, order.price,
+                                            self.costs.taker_fee)
         return result
 
     def marks(self) -> dict[str, float]:
@@ -145,7 +150,47 @@ class DryRunner:
 
     def snapshot_state(self):
         """Read-only PortfolioState at current marks — for the operator UI (no trading effect)."""
-        return self.account.to_state(self.marks())
+        with self._lock:
+            return self.account.to_state(self.marks())
+
+    def place_manual(self, *, side: str, qty: float, price: float) -> dict:
+        """Place a MANUAL paper order through the SAME risk engine + broker as the bot (Inv. 3/9).
+
+        Operator-initiated write from the UI. It is not sized by a strategy — the operator gives
+        qty/price — but it still passes `risk.engine.validate` (no backdoor) and only fills if
+        approved. Serialized with the loop via the runner lock so the paper account can't be
+        corrupted by a concurrent tick. Returns a JSON-able result; never raises on bad input.
+        """
+        from src.risk import engine
+
+        with self._lock:
+            try:
+                order = Order(self.pair, side, float(qty), float(price), "manual")
+            except (ValueError, TypeError) as e:
+                return {"placed": False, "filled": 0.0, "reasons": [f"invalid_order:{e}"]}
+            marks = dict(self.last_prices)
+            for p, pos in self.account.positions.items():
+                marks.setdefault(p, pos.entry_price)
+            marks[self.pair] = float(price)  # the operator's price is the mark for this decision
+            ctx = engine.RiskContext(prices=marks, exchange_state=dict(_GOOD_EXCHANGE),
+                                     killswitch=self.killswitch, market=self.loop.market)
+            state = self.account.to_state(marks)
+            decision = engine.validate(order, state, self.loop.cfg, ctx)
+            log_risk_decision(self.loop.events, order, decision)
+            if not decision.approved:
+                return {"placed": False, "filled": 0.0, "reasons": list(decision.reasons)}
+            self._manual_seq += 1
+            cid = f"manual-{self._manual_seq}"
+            submit = self.loop.broker.submit(decision, client_order_id=cid)
+            self.loop.events.append(ORDER_SUBMITTED, {"pair": self.pair, "side": side,
+                                                      "qty": submit.amount, "client_order_id": cid})
+            if submit.filled > 0:
+                self.loop.events.append(FILL_RECEIVED, {"pair": self.pair, "filled": submit.filled})
+                if side == "buy":
+                    self.account.apply_buy(self.pair, submit.filled, order.price, self.costs.taker_fee)
+                else:
+                    self.account.apply_sell(self.pair, submit.filled, order.price, self.costs.taker_fee)
+            return {"placed": True, "filled": submit.filled, "reasons": []}
 
     def run(self, *, iterations: int | None = None, poll_seconds: float = 60.0) -> None:
         """CLI loop: tick, then sleep until roughly the next candle. iterations=None runs forever."""

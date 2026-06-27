@@ -53,5 +53,16 @@ def build_live_context(runner) -> OperatorContext:
         from src.ui.orders_panel import build_order_trade_panel
         return build_order_trade_panel(runner.loop.events.read_all())
 
+    def _place(body: dict) -> dict:
+        # the one UI write to the trading path: a MANUAL paper order through the same risk engine
+        # + broker as the bot (Inv 3/9), serialized with the loop via the runner lock.
+        prices = runner.marks()
+        default_price = prices.get(runner.pair, 0.0)
+        return runner.place_manual(
+            side=body.get("side", "buy"),
+            qty=float(body.get("qty", 0.0) or 0.0),
+            price=float(body.get("price", default_price) or default_price),
+        )
+
     return OperatorContext(dashboard=_dashboard, preview=_preview, killswitch=runner.killswitch,
-                           orders=_orders)
+                           orders=_orders, place=_place)

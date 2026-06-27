@@ -148,6 +148,25 @@ def test_demo_orders_provider():
     assert o["attempts"] and o["fills"] and o["submitted"][0]["client_order_id"] == "demo-1"
 
 
+def test_order_place_disabled_by_default_is_404():
+    # placing is a trading-path write; the read-only demo context leaves it unconfigured
+    r = handle_request("POST", "/api/order", {"side": "buy", "qty": 1.0}, _ctx())
+    assert r.status == 404
+
+
+def test_order_place_routes_to_provider_when_enabled():
+    ctx = _ctx()
+    ctx.place = lambda body: {"placed": True, "filled": body["qty"], "reasons": []}
+    r = handle_request("POST", "/api/order", {"side": "buy", "qty": 0.5}, ctx)
+    assert r.status == 200 and r.body["placed"] is True and r.body["filled"] == 0.5
+
+
+def test_order_place_rejects_get():
+    ctx = _ctx()
+    ctx.place = lambda body: {"placed": True}
+    assert handle_request("GET", "/api/order", None, ctx).status == 405
+
+
 def test_sse_frame_format():
     frame = dashboard_sse_frame({"equity": 1.0})
     assert frame.startswith("data: ") and frame.endswith("\n\n")
