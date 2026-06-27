@@ -5,12 +5,14 @@ Pulls real BTC/USDT 1h candles, runs them through the full P0 pipeline
 (feed → quality gate → single feature path → dumb strategy → risk-sized backtest →
 walk-forward/metrics), and proves the stored data backtests reproducibly (§8.8).
 
-PROVISIONAL DATA SOURCE: the trading venue is Binance Japan (ADR 0002), which is not reachable
-from this environment (Binance returns HTTP 451 here) and may not list BTC/USDT. Kraken is used
-ONLY to exercise the pipeline on real market data. Closing the P0 DONE-GATE for real requires
-running this on the operator's actual venue, from an environment that can reach it, with enough
-history for a ≥100-trade multi-regime sample. The cost model is our Binance VIP0+BNB config and
-does NOT reflect Kraken's fees — fine for harness validation, not for an edge claim.
+PROVISIONAL DATA SOURCE: the trading venue is Binance Japan (ADR 0002). For harness validation
+we use a deep-history public venue ONLY to exercise the pipeline on real, multi-regime market
+data — never the Binance Global entity (ADR 0002 keeps Global data out of any signal path), and
+never as an edge claim. Bybit serves multi-year 1h BTC/USDT via paginated fetch; Kraken's public
+OHLC caps at ~720 recent candles, too few for the ≥100-trade gate. The cost model is our Binance
+VIP0+BNB config and does NOT reflect this venue's fees. Closing the P0 DONE-GATE for real still
+requires running on the operator's actual venue (Binance Japan), with a ≥100-trade multi-regime
+sample and a ≥30-day forward dry-run.
 """
 from __future__ import annotations
 
@@ -28,10 +30,10 @@ from src.risk.sizing import MarketConstraints
 from src.strategy.ema_cross import EmaCross
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "data" / "parquet" / "btc_usdt_1h_kraken.parquet"
-EXCHANGE_ID = "kraken"
+EXCHANGE_ID = "bybit"
 PAIR = "BTC/USDT"
 TIMEFRAME = "1h"
+DATA = ROOT / "data" / "parquet" / f"btc_usdt_1h_{EXCHANGE_ID}.parquet"
 
 
 def fetch_real_ohlcv(history_days=900, page_limit=720):
