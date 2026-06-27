@@ -165,7 +165,10 @@ def build_runner(*, data_exchange, paper_exchange, events: EventLog, strategy, c
 def main(argv: list[str] | None = None) -> None:
     import ccxt
 
+    from src.core.console import force_utf8_stdio
     from src.strategy.ema_cross import EmaCross
+
+    force_utf8_stdio()
 
     p = argparse.ArgumentParser(description="Paper dry-run loop (no real capital).")
     p.add_argument("--data-exchange", default="kraken", help="ccxt id for the read-only OHLCV feed")

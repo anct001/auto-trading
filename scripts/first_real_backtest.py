@@ -44,6 +44,9 @@ def fetch_real_ohlcv(limit=720):
 
 
 def main():
+    from src.core.console import force_utf8_stdio
+
+    force_utf8_stdio()
     print(f"== fetch real {PAIR} {TIMEFRAME} from {EXCHANGE_ID} ==")
     df = fetch_real_ohlcv()
     print(f"  fetched closed candles: {len(df)}  "
