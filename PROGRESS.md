@@ -374,7 +374,17 @@ pages (/ /markets /coin /orders) 200 + all read APIs ok. Full suite **446**, ruf
 (< atr_period+2) so the live loop returned `insufficient_data` every tick. `DryRunner` now keeps a
 rolling buffer, **pre-warmed** once via the paginated feed then merged each tick (prewarm=True
 default). Verified: paper dry-run on REAL bitbank BTC/JPY now ticks (MarketReceived +
-SignalGenerated). **Remaining (UI):** only richer chart pixels (nice-to-have).
+SignalGenerated).
+
+### 2026-06-28 — dashboard enrichment (gap analysis vs comparable bot dashboards)
+Chose to enhance the self-hosted UI (not adopt QuantIDE — see HANDOFF decision). Added, all
+self-hosted/no-deps/invariant-safe: **live equity curve** (SVG) + **limit gauges** (Day P&L /
+drawdown / gross vs soft/hard/cap); **performance summary** (`ui/performance.py`: win rate,
+profit factor [None=∞, JSON-safe — float('inf') breaks browser JSON.parse], expectancy, total
+P&L, best/worst); **closed-trades table** (`DryRunner` records round-trips on every sell); **bot
+health** (tick_count/last_tick). All wired live (`dry_run.py --serve-ui`) + demo; verified live on
+real bitbank (strict-JSON safe). Full suite **456**. **Remaining (UI):** nice-to-haves — SSE push
+instead of poll, agent-view overlay on the coin chart, drag-drop layout, theme.
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
