@@ -119,6 +119,13 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
             return Response(405, {"error": "read-only endpoint"})
         return Response(200, ctx.dashboard())
 
+    if path == "/metrics":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        from src.ops.metrics import render_metrics
+        return Response(200, render_metrics(ctx.dashboard()),
+                        content_type="text/plain; version=0.0.4; charset=utf-8")
+
     if path == "/api/preview":
         if method != "POST":
             return Response(405, {"error": "use POST"})

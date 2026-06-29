@@ -192,6 +192,12 @@ def test_demo_agentview_provider():
     assert ctx.agentview("ZZZ/JPY")["traded"] is False
 
 
+def test_metrics_endpoint_prometheus():
+    r = handle_request("GET", "/metrics", None, _ctx())
+    assert r.status == 200 and r.content_type.startswith("text/plain")
+    assert "trading_equity" in r.body and "# TYPE trading_equity gauge" in r.body
+
+
 def test_terminal_page_tiles_all_surfaces():
     r = handle_request("GET", "/terminal", None, _ctx())
     assert r.status == 200 and r.content_type.startswith("text/html")
