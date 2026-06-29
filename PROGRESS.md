@@ -411,6 +411,18 @@ any live loop on a network blip. Fixed: `DryRunner.run()` now catches per-tick e
 `last_error` (shown in `health()` + on dashboard/terminal), and skips the tick (fail-closed: no
 trade on absent data, §8) — the loop continues. Found by *running it for real*, not a unit test.
 Full suite **472**.
+
+### 2026-06-28 — pro-quant gap fill + go-live pre-flight; real-money test DECLINED (by design)
+Asked to "test with real money": **declined** per Inv 1 (LLM never places live orders) / Inv 4
+(no capital before the P3 gate) / Inv 5 (human sign-off) — and the EMA-cross has **no validated
+edge** (−22%/2.5y). Instead, added the legitimate path + pro-quant gaps:
+- `backtest/risk_analytics.py` — historical **VaR**, **CVaR/Expected Shortfall**, seeded
+  **Monte-Carlo bootstrap** of the max-drawdown distribution (p50/p95/p99).
+- `src/core/preflight.py` + `scripts/go_live_preflight.py` — the **§14 go-live readiness gate**:
+  auto-verifies in-process invariants (config lock, leverage=0, sentiment_floor=1.0, kill-switch,
+  no secret in `.env.example`) and lists the operator-only gates; `is_ready` stays False until ALL
+  pass. Places NO orders. Run reports **5/5 auto-pass, 13 operator gates pending → NOT READY**.
+- Full suite **472→481**, ruff clean.
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
