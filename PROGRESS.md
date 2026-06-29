@@ -423,6 +423,16 @@ edge** (−22%/2.5y). Instead, added the legitimate path + pro-quant gaps:
   no secret in `.env.example`) and lists the operator-only gates; `is_ready` stays False until ALL
   pass. Places NO orders. Run reports **5/5 auto-pass, 13 operator gates pending → NOT READY**.
 - Full suite **472→481**, ruff clean.
+
+### 2026-06-28 — more pro-quant gaps (paper-safe): stress / alerting / metrics
+- `backtest/scenario.py` — adversarial **stress tests** (flash_crash/gap_down/vol_spike) run
+  through the risk-sized backtest; proves the protective stop caps a flash-crash loss (market
+  −30% → realized worst trade > −15%).
+- `src/ops/alerts.py` — **operator alerting** (edge-triggered Alerter, no spam; print/event-log/
+  webhook fail-soft sinks) over the dashboard payload (§12/§15).
+- `src/ops/metrics.py` + `GET /metrics` — **Prometheus exposition** of operator state for
+  Grafana/Alertmanager (§16). New `src/ops` package (top-level `ops/` stays infra/docker).
+- Full suite **481→493**, ruff clean. Still NOT READY for real capital (preflight unchanged).
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
