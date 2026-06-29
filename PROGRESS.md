@@ -402,6 +402,15 @@ Then the coin chart was upgraded to **TradingView Lightweight Charts** (v4.2.3, 
 candles + volume + EMA + crosshair/zoom + tf buttons, over our own `/api/coin`. (TradingView
 *data* APIs were rejected — ToS §11 + reproducibility/ADR 0002.) Full suite **471**.
 **Remaining (UI):** essentially feature-complete for a solo operator.
+
+### 2026-06-28 — robustness fix found by the live run (P3-relevant)
+A live paper run on bitbank **crashed (exit 1) after ~400 ticks** when bitbank reset a connection
+(`ConnectionError 10054` → ccxt `NetworkError`) inside `run_once`'s fetch — it propagated out of
+`run()` and killed the process. That would have failed the **P3 ≥30-day no-crash gate** and killed
+any live loop on a network blip. Fixed: `DryRunner.run()` now catches per-tick errors, records
+`last_error` (shown in `health()` + on dashboard/terminal), and skips the tick (fail-closed: no
+trade on absent data, §8) — the loop continues. Found by *running it for real*, not a unit test.
+Full suite **472**.
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
