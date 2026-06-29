@@ -433,6 +433,16 @@ edge** (−22%/2.5y). Instead, added the legitimate path + pro-quant gaps:
 - `src/ops/metrics.py` + `GET /metrics` — **Prometheus exposition** of operator state for
   Grafana/Alertmanager (§16). New `src/ops` package (top-level `ops/` stays infra/docker).
 - Full suite **481→493**, ruff clean. Still NOT READY for real capital (preflight unchanged).
+
+### 2026-06-28 — alerting wired + strategy library & edge search
+- **Alerting wired into the dry-run loop**: `DryRunner._check_alerts()` runs the edge-triggered
+  `Alerter` each tick (print + event-log sinks; `dry_run.py --alert-webhook` for Telegram/Slack).
+- **Strategy library**: `indicators.rsi` (Wilder) + `RsiReversion` (range) + `DonchianBreakout`
+  (trend), intent-only/causal/TDD.
+- **`scripts/strategy_search.py`** runs all candidates through walk-forward + Deflated Sharpe with
+  one shared journal (§5). Run on real Bybit 1y: **ALL 5 REJECTED** (OOS Sharpe negative, DSR ≪
+  0.95) → **no validated edge**. The concrete reason real-money testing is blocked (on top of §14).
+- Full suite **493→504**, ruff clean.
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
