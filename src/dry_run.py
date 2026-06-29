@@ -126,6 +126,7 @@ class DryRunner:
         self._trades_cap = 1000
         self._tick_count = 0
         self._last_tick_at: str | None = None
+        self._last_error: str | None = None  # last transient tick error (data feed hiccup, etc.)
 
     def _record_close(self, pair: str, qty: float, exit_price: float) -> None:
         """Record a closed round-trip (caller holds the lock; call BEFORE apply_sell)."""
@@ -148,7 +149,7 @@ class DryRunner:
 
     def health(self) -> dict:
         return {"running": True, "tick_count": self._tick_count, "last_tick_at": self._last_tick_at,
-                "pair": self.pair, "timeframe": self.timeframe}
+                "pair": self.pair, "timeframe": self.timeframe, "last_error": self._last_error}
 
     def current_frame(self):
         """The latest candle window (pre-warmed rolling buffer), for the agent-view overlay."""
@@ -285,13 +286,24 @@ class DryRunner:
             return {"placed": True, "filled": submit.filled, "reasons": []}
 
     def run(self, *, iterations: int | None = None, poll_seconds: float = 60.0) -> None:
-        """CLI loop: tick, then sleep until roughly the next candle. iterations=None runs forever."""
+        """CLI loop: tick, then sleep until roughly the next candle. iterations=None runs forever.
+
+        A tick must NEVER kill the loop: a transient data-feed error (network reset, exchange 5xx,
+        rate limit) is caught, recorded, and skipped — a missing candle simply means no decision
+        this tick (fail-closed: no trade on absent data, §8). This is what lets the ≥N-day dry-run
+        run continuously without crashing (P3). Programming errors surface the same way (logged),
+        not silently — the operator sees `last_error` on the dashboard.
+        """
         i = 0
         while iterations is None or i < iterations:
-            result = self.run_once()
-            action = result.action if result else "no_data"
-            print(f"[dry-run] tick {i}: {action}  cash={self.account.cash:.2f}  "
-                  f"realized_pnl={self.account.realized_pnl:.2f}")
+            try:
+                result = self.run_once()
+                action = result.action if result else "no_data"
+                print(f"[dry-run] tick {i}: {action}  cash={self.account.cash:.2f}  "
+                      f"realized_pnl={self.account.realized_pnl:.2f}")
+            except Exception as e:  # noqa: BLE001 — resilience: a feed hiccup must not stop the loop
+                self._last_error = f"{type(e).__name__}: {e}"
+                print(f"[dry-run] tick {i}: ERROR {self._last_error} (skipped, continuing)")
             i += 1
             if iterations is not None and i >= iterations:
                 break

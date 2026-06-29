@@ -229,7 +229,8 @@ function render(d){
   drawEquity(d.equity_curve);
   const ks=d.killswitch_engaged?`<span class="bad">KILLED (${d.killswitch_reason||""})</span>`:`<span class="ok">armed</span>`;
   const h=d.health||{};const htxt=h.last_tick_at?`· ticks ${h.tick_count} · last ${h.last_tick_at.slice(11,19)}Z`:"";
-  document.getElementById("ks").innerHTML="· "+ks+" "+htxt;
+  const herr=h.last_error?` · <span class="warn">⚠ ${h.last_error}</span>`:"";
+  document.getElementById("ks").innerHTML="· "+ks+" "+htxt+herr;
   const pf=d.performance||{};
   const pfCell=!pf.trade_count?"–":(pf.profit_factor==null?"∞":pf.profit_factor.toFixed(2));
   const perf=[["Trades",pf.trade_count??0,""],
@@ -326,7 +327,8 @@ function renderDash(d){ if(!d){return j("/api/dashboard").then(renderDash);}
  document.getElementById("kpis").innerHTML='<div style="display:flex;gap:18px;flex-wrap:wrap">'+
   k.map(x=>`<div class="kpi"><span class="t">${x[0]}</span><b class="${x[2]}">${x[1]}</b></div>`).join("")+'</div>';
  document.getElementById("ks").innerHTML=(d.killswitch_engaged?'<span class="bad">KILLED</span>':'<span class="ok">armed</span>')+
-  (h.last_tick_at?` · ticks ${h.tick_count} · ${h.last_tick_at.slice(11,19)}Z`:"");
+  (h.last_tick_at?` · ticks ${h.tick_count} · ${h.last_tick_at.slice(11,19)}Z`:"")+
+  (h.last_error?` · <span class="warn">⚠ ${h.last_error}</span>`:"");
  document.querySelector("#pos tbody").innerHTML=(d.positions||[]).map(p=>
   `<tr><td>${p.pair}</td><td>${f(p.qty,6)}</td><td class="${p.unrealized_pnl>=0?'ok':'bad'}">${f(p.unrealized_pnl)}</td><td><button onclick="flatten('${p.pair}',${p.qty},${p.price})">×</button></td></tr>`).join("")||'<tr><td class=mut>flat</td></tr>';
  document.getElementById("log").innerHTML=(d.decision_log||[]).slice(0,8).map(e=>`<div class=mut>${(e.timestamp||"").slice(11,19)} <b>${e.type}</b> ${e.detail||""}</div>`).join("");

@@ -99,6 +99,26 @@ def _sparse_runner(strategy, events, prewarm):
     )
 
 
+class BoomExchange:
+    """Data feed that always raises — simulates a transient network/exchange failure."""
+
+    def fetch_ohlcv(self, symbol, timeframe=None, since=None, limit=None):
+        raise ConnectionError("simulated [WinError 10054] connection reset")
+
+
+def test_run_survives_transient_feed_errors(tmp_path):
+    # a feed failure must NOT crash the loop (P3 needs a >=30-day continuous dry-run, no crash)
+    runner = build_runner(
+        data_exchange=BoomExchange(), paper_exchange=PaperBrokerExchange(),
+        events=EventLog(tmp_path / "e.jsonl"), strategy=ScriptStrategy([INTENT_HOLD]), cfg=_cfg(),
+        costs=_COSTS, market=_MARKET, account=PaperAccount(cash=100000.0), pair=PAIR,
+        timeframe="1h", atr_period=3, prewarm=False,
+    )
+    runner.run(iterations=3, poll_seconds=0)  # must return, not raise
+    h = runner.health()
+    assert h["last_error"] is not None and "ConnectionError" in h["last_error"]
+
+
 def test_equity_history_records_each_tick(tmp_path):
     paper, account = PaperBrokerExchange(), PaperAccount(cash=100000.0)
     r = _runner(ScriptStrategy([INTENT_HOLD, INTENT_HOLD]), EventLog(tmp_path / "e.jsonl"), paper, account)
