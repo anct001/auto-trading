@@ -54,6 +54,27 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     return true_range(df).rolling(period).mean()
 
 
+def rsi(values: Iterable[float], period: int = 14) -> pd.Series:
+    """Wilder's Relative Strength Index in [0, 100] (Wilder smoothing via ewm(alpha=1/period)).
+
+    Causal: RSI at bar t uses only bars ≤ t. A flat/rising-only window → 100; falling-only → 0.
+    Raises on a non-positive period. The single RSI path for strategy + UI (§15).
+    """
+    if period <= 0:
+        raise ValueError(f"RSI period must be positive, got {period}")
+    s = pd.Series(list(values), dtype="float64")
+    delta = s.diff()
+    gain = delta.clip(lower=0.0)
+    loss = (-delta).clip(lower=0.0)
+    avg_gain = gain.ewm(alpha=1.0 / period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1.0 / period, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    out = 100.0 - 100.0 / (1.0 + rs)
+    out[avg_loss == 0] = 100.0   # no losses → maximally overbought
+    out[avg_gain == 0] = 0.0     # no gains → maximally oversold
+    return out
+
+
 def with_emas(
     df: pd.DataFrame, periods: Iterable[int], *, source: str = "close"
 ) -> pd.DataFrame:

@@ -127,6 +127,22 @@ class DryRunner:
         self._tick_count = 0
         self._last_tick_at: str | None = None
         self._last_error: str | None = None  # last transient tick error (data feed hiccup, etc.)
+        self.alerter = None  # optional ops.alerts.Alerter — fires on breaker/limit/kill each tick
+
+    def _check_alerts(self) -> None:
+        """Run the alerter over the current operator state (edge-triggered; fail-soft)."""
+        if self.alerter is None:
+            return
+        try:
+            from dataclasses import asdict
+            from src.ui.dashboard.model import build_dashboard
+            payload = asdict(build_dashboard(
+                state=self.snapshot_state(), cfg=self.loop.cfg, prices=self.marks(),
+                killswitch=self.killswitch, events=self.loop.events.read_all()))
+            payload["health"] = self.health()
+            self.alerter.update(payload)
+        except Exception:
+            pass  # alerting must never break the loop (Inv 2 spirit)
 
     def _record_close(self, pair: str, qty: float, exit_price: float) -> None:
         """Record a closed round-trip (caller holds the lock; call BEFORE apply_sell)."""
@@ -304,6 +320,7 @@ class DryRunner:
             except Exception as e:  # noqa: BLE001 — resilience: a feed hiccup must not stop the loop
                 self._last_error = f"{type(e).__name__}: {e}"
                 print(f"[dry-run] tick {i}: ERROR {self._last_error} (skipped, continuing)")
+            self._check_alerts()
             i += 1
             if iterations is not None and i >= iterations:
                 break
@@ -353,6 +370,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--serve-ui", action="store_true",
                    help="serve the read-only operator dashboard over the live paper state")
     p.add_argument("--ui-port", type=int, default=8787)
+    p.add_argument("--alert-webhook", default=None,
+                   help="POST alerts (breaker/limit/kill) to this webhook URL (Telegram/Slack/push)")
     args = p.parse_args(argv)
 
     import os
@@ -371,6 +390,14 @@ def main(argv: list[str] | None = None) -> None:
     )
     print(f"[dry-run] PAPER mode — no real capital. data={args.data_exchange} pair={args.pair} "
           f"tf={args.timeframe} equity={args.equity}")
+
+    # operator alerting: log every alert to the event store + print; optional webhook (§12/§15)
+    from src.ops.alerts import Alerter, event_log_sink, print_sink, webhook_sink
+    sinks = [print_sink, event_log_sink(runner.loop.events)]
+    if args.alert_webhook:
+        sinks.append(webhook_sink(args.alert_webhook))
+        print(f"[dry-run] alerts -> webhook {args.alert_webhook}")
+    runner.alerter = Alerter(sinks=sinks)
 
     if args.serve_ui:
         import threading

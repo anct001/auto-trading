@@ -99,6 +99,18 @@ def _sparse_runner(strategy, events, prewarm):
     )
 
 
+def test_dry_run_loop_fires_alerts(tmp_path):
+    from src.ops.alerts import Alerter, event_log_sink
+    paper, account = PaperBrokerExchange(), PaperAccount(cash=100000.0)
+    events = EventLog(tmp_path / "e.jsonl")
+    runner = _runner(ScriptStrategy([INTENT_HOLD]), events, paper, account)
+    runner.killswitch.manual_kill()  # tripped condition → should alert
+    runner.alerter = Alerter(sinks=[event_log_sink(events)])
+    runner.run(iterations=1, poll_seconds=0)
+    alerts = [e for e in events.read_all() if e.type == "Alert"]
+    assert any(a.payload["code"] == "kill_switch" for a in alerts)
+
+
 class BoomExchange:
     """Data feed that always raises — simulates a transient network/exchange failure."""
 
