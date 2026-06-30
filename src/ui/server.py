@@ -711,27 +711,44 @@ def chat_html() -> str:
  form{display:flex;gap:8px} input{flex:1;padding:8px;background:#161a20;border:1px solid #232833;color:#d7dbe0;border-radius:6px}
  button{padding:8px 14px;background:#2c4a6b;color:#fff;border:0;border-radius:6px;cursor:pointer}
  button:disabled{opacity:.5;cursor:default} .muted{color:#8b93a1}
+ #chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+ .chip{font-size:12px;padding:5px 9px;background:#161a20;border:1px solid #232833;color:#9fb4d6;border-radius:14px;cursor:pointer}
+ .chip:hover{border-color:#2c4a6b} #bar{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+ #clear{background:#2a2230;font-size:12px;padding:5px 9px}
 </style></head><body>
 <h1>Assistant <a href="/">· dashboard</a> <a href="/orders">· orders</a> <a href="/coin">· coin</a></h1>
 <div class="banner">⚠ Read-only assistant. It explains the bot's current state — it cannot place orders, change
  limits, or touch the kill-switch. All trading is deterministic and risk-gated.</div>
+<div id="chips"></div>
 <div id="log"></div>
+<div id="bar"><button id="clear" type="button">Clear chat</button><span id="status" class="muted"></span></div>
 <form id="f"><input id="q" placeholder="Ask about equity, positions, why we're flat, the last rejection…" autocomplete="off">
  <button id="send">Ask</button></form>
 <script>
 const log=document.getElementById("log"),q=document.getElementById("q"),send=document.getElementById("send");
+const SUGGEST=["What's my equity and P&L today?","Why are we flat right now?","What's my drawdown vs the kill-switch?",
+ "Summarize my recent closed trades.","Explain the last risk rejection.","Is the bot healthy?"];
+let hist=[];  // [{role, content}] prior turns, sent for multi-turn context (bounded server-side)
 function add(cls,meta,text){const w=document.createElement("div");w.className="msg "+cls;
- w.innerHTML='<div class="meta">'+meta+'</div>'+document.createTextNode(text).textContent;
- log.appendChild(w);w.scrollIntoView();}
-document.getElementById("f").addEventListener("submit",async(e)=>{e.preventDefault();
- const text=q.value.trim();if(!text)return;add("you","you",text);q.value="";send.disabled=true;
- add("bot","assistant","…");const pending=log.lastChild;
+ const m=document.createElement("div");m.className="meta";m.textContent=meta;
+ const b=document.createElement("div");b.textContent=text;w.appendChild(m);w.appendChild(b);
+ log.appendChild(w);w.scrollIntoView();return b;}
+async function ask(text){text=(text||"").trim();if(!text)return;add("you","you",text);
+ q.value="";send.disabled=true;const pending=add("bot","assistant","…");
  try{const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
-   body:JSON.stringify({question:text})});const j=await r.json();
-  pending.innerHTML='<div class="meta">assistant</div>'+document.createTextNode(j.answer||j.error||"(no answer)").textContent;
- }catch(err){pending.innerHTML='<div class="meta">assistant</div>'+document.createTextNode("error: "+err).textContent;}
- send.disabled=false;q.focus();});
-add("bot","assistant","Ask me about the current state — equity, drawdown, open positions, or why the agent is or isn't trading.");
+   body:JSON.stringify({question:text,history:hist})});const j=await r.json();
+  const ans=j.answer||j.error||"(no answer)";pending.textContent=ans;
+  hist.push({role:"user",content:text});hist.push({role:"assistant",content:ans});
+  if(hist.length>12)hist=hist.slice(-12);
+ }catch(err){pending.textContent="error: "+err;}
+ send.disabled=false;q.focus();}
+document.getElementById("f").addEventListener("submit",(e)=>{e.preventDefault();ask(q.value);});
+document.getElementById("clear").addEventListener("click",()=>{hist=[];log.innerHTML="";greet();});
+const chips=document.getElementById("chips");
+SUGGEST.forEach(s=>{const c=document.createElement("span");c.className="chip";c.textContent=s;
+ c.addEventListener("click",()=>ask(s));chips.appendChild(c);});
+function greet(){add("bot","assistant","Ask me about the current state — equity, drawdown, open positions, recent trades, or why the agent is or isn't trading. I remember this conversation; use the chips for quick questions.");}
+greet();
 </script></body></html>"""
 
 
@@ -928,7 +945,8 @@ def build_demo_context() -> OperatorContext:
                   'cannot trade. This demo has fixed data; run --serve-ui with Ollama for live '
                   'answers."}}')
         client = OllamaChat(transport=lambda url, payload: canned)
-        return _ans(str(body.get("question", "")), _dashboard(), client=client)
+        return _ans(str(body.get("question", "")), _dashboard(), client=client,
+                    history=body.get("history"))
 
     return OperatorContext(
         dashboard=_dashboard,

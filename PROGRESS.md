@@ -513,6 +513,21 @@ Added a real chat UI the operator can ask about the bot's state — built within
 - Suite **520→532**, ruff clean. The assistant cannot trade — all trading stays on the manual
   risk-gated order form (Inv 9) and the kill-switch.
 
+### 2026-06-30 (session, cont.) — chat assistant extended (richer context + multi-turn + chips)
+Made the read-only assistant genuinely useful, still within the invariants:
+- **Richer whitelisted context** (`build_context_summary`): now also renders **bot health**
+  (running/ticks/last-tick/last-error), **realized performance** (trades, win rate, profit factor
+  [∞-safe], expectancy, total P&L, best/worst), and **recent closed trades** — all from the
+  already-redacted live dashboard payload, still an explicit field whitelist (no leak).
+- **Multi-turn conversation** (`_sanitize_history` + `build_messages(..., history)`): follow-ups
+  ("why?") keep context. History is sanitized (only user/assistant + string content), bounded
+  (`_MAX_HISTORY_TURNS=6`), and never raises on junk; the current state is attached only to the
+  latest turn (no stale-snapshot duplication). Threaded through `OllamaChat.answer`/`answer` and the
+  live + demo `_chat` (`body["history"]`).
+- **UI** (`chat_html`): client-side conversation memory sent as `history`, **suggested-question
+  chips**, and a **Clear chat** button. Live HTTP smoke OK (chips, multi-turn, junk-history
+  fail-soft). +5 tests. Suite **532→537**, ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

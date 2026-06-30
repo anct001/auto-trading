@@ -152,7 +152,8 @@ def build_live_context(
     def _chat(body: dict) -> dict:
         # READ-ONLY operator assistant (Inv 1): explains the live dashboard snapshot, never acts.
         # Off the trading path (Inv 2) — runs only on this UI thread when the operator asks.
-        return _chat_answer(str(body.get("question", "")), _dashboard(), client=chat_client)
+        return _chat_answer(str(body.get("question", "")), _dashboard(),
+                            client=chat_client, history=body.get("history"))
 
     return OperatorContext(dashboard=_dashboard, preview=_preview, killswitch=runner.killswitch,
                            orders=_orders, place=_place, orderbook=_orderbook, agentview=_agentview,

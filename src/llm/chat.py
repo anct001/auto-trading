@@ -29,6 +29,8 @@ ChatTransport = Callable[[str, dict], str]
 _DEFAULT_HOST = "http://localhost:11434"
 _MAX_QUESTION_CHARS = 1000
 _MAX_LOG_LINES = 12
+_MAX_TRADES = 5
+_MAX_HISTORY_TURNS = 6
 
 SYSTEM_PROMPT = (
     "You are a READ-ONLY assistant embedded in a solo-operator crypto trading dashboard. "
@@ -46,6 +48,19 @@ def _fmt_pct(x: object) -> str:
         return f"{float(x):+.2f}%"  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return "n/a"
+
+
+def _performance_line(perf: dict) -> str:
+    pf = perf.get("profit_factor")
+    pf_str = "∞" if pf is None else (f"{pf:.2f}" if isinstance(pf, (int, float)) else "n/a")
+    wr = perf.get("win_rate")
+    wr_str = f"{float(wr) * 100:.1f}%" if isinstance(wr, (int, float)) else "n/a"
+    return (
+        f"Performance (realized): {perf.get('trade_count', 0)} trades, win rate {wr_str}, "
+        f"profit factor {pf_str}, expectancy {_fmt_pct(perf.get('expectancy'))}, "
+        f"total P&L {perf.get('total_pnl')}, best {_fmt_pct(perf.get('best'))}, "
+        f"worst {_fmt_pct(perf.get('worst'))}"
+    )
 
 
 def build_context_summary(snapshot: dict) -> str:
@@ -70,6 +85,18 @@ def build_context_summary(snapshot: dict) -> str:
     else:
         lines.append("Kill-switch: armed")
 
+    health = snapshot.get("health")
+    if isinstance(health, dict):
+        line = (f"Bot health: {'running' if health.get('running') else 'stopped'}, "
+                f"{health.get('tick_count', 0)} ticks, last tick {health.get('last_tick_at')}")
+        if health.get("last_error"):
+            line += f", last error: {health.get('last_error')}"
+        lines.append(line)
+
+    perf = snapshot.get("performance")
+    if isinstance(perf, dict) and perf.get("trade_count"):
+        lines.append(_performance_line(perf))
+
     positions = snapshot.get("positions") or []
     if positions:
         lines.append("Positions:")
@@ -82,6 +109,15 @@ def build_context_summary(snapshot: dict) -> str:
     else:
         lines.append("Positions: flat (no open positions)")
 
+    trades = snapshot.get("trades") or []
+    if trades:
+        lines.append("Recent closed trades (newest first):")
+        for t in trades[:_MAX_TRADES]:
+            lines.append(
+                f"  - {t.get('exit_time')} {t.get('pair')} return {_fmt_pct(t.get('return'))}, "
+                f"P&L {t.get('pnl')}"
+            )
+
     log = snapshot.get("decision_log") or []
     if log:
         lines.append("Recent decisions (newest first):")
@@ -92,12 +128,36 @@ def build_context_summary(snapshot: dict) -> str:
     return "\n".join(lines)
 
 
-def build_messages(question: str, snapshot: dict) -> list[dict]:
-    """Build the Ollama /api/chat message list: system + state + the operator's question. Pure."""
+def _sanitize_history(history: object) -> list[dict]:
+    """Coerce caller-supplied prior turns into safe {role, content} dicts. Never raises.
+
+    Keeps only user/assistant roles with string content (trimmed), drops anything malformed, and
+    bounds to the last ``_MAX_HISTORY_TURNS`` so a long conversation can't blow the context window.
+    """
+    if not isinstance(history, list):
+        return []
+    out: list[dict] = []
+    for turn in history:
+        if not isinstance(turn, dict):
+            continue
+        role = turn.get("role")
+        content = turn.get("content")
+        if role not in ("user", "assistant") or not isinstance(content, str) or not content.strip():
+            continue
+        out.append({"role": role, "content": content.strip()[:_MAX_QUESTION_CHARS]})
+    return out[-_MAX_HISTORY_TURNS:]
+
+
+def build_messages(question: str, snapshot: dict, history: object = None) -> list[dict]:
+    """Build the Ollama /api/chat message list: system + prior turns + state + question. Pure.
+
+    The current state is attached only to the latest turn (freshest, not duplicated into history),
+    so follow-ups ("why?") keep conversational context without re-sending stale snapshots."""
     q = (question or "").strip()[:_MAX_QUESTION_CHARS]
     user = f"CURRENT STATE:\n{build_context_summary(snapshot)}\n\nOPERATOR QUESTION: {q}"
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
+        *_sanitize_history(history),
         {"role": "user", "content": user},
     ]
 
@@ -142,26 +202,27 @@ class OllamaChat:
         self.num_predict = num_predict
         self._transport = transport or _http_post
 
-    def answer(self, question: str, snapshot: dict) -> str:
+    def answer(self, question: str, snapshot: dict, history: object = None) -> str:
         payload = {
             "model": self.model,
-            "messages": build_messages(question, snapshot),
+            "messages": build_messages(question, snapshot, history),
             "stream": False,
             "options": {"temperature": self.temperature, "num_predict": self.num_predict},
         }
         return parse_chat_response(self._transport(self.url, payload))
 
 
-def answer(question: str, snapshot: dict, *, client: OllamaChat) -> dict:
+def answer(question: str, snapshot: dict, *, client: OllamaChat, history: object = None) -> dict:
     """Fail-soft entry point for the UI: returns ``{"answer", "error"}``. Never raises.
 
-    A blank question is refused without calling the model. Any backend failure (Ollama down,
+    A blank question is refused without calling the model. ``history`` (prior {role, content}
+    turns) is sanitized and bounded so follow-ups work. Any backend failure (Ollama down,
     malformed reply) yields a graceful 'unavailable' answer — the dashboard keeps working and the
     trading loop is unaffected (Inv 2)."""
     q = (question or "").strip()
     if not q:
         return {"answer": "", "error": "empty question"}
     try:
-        return {"answer": client.answer(q, snapshot), "error": None}
+        return {"answer": client.answer(q, snapshot, history), "error": None}
     except Exception as e:  # noqa: BLE001 — fail-soft: a chat error must never reach the UI/loop
         return {"answer": f"(assistant unavailable: {e})", "error": str(e)}

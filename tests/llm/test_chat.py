@@ -58,12 +58,67 @@ def test_context_summary_is_whitelisted_no_unknown_field_leaks():
     assert "SHOULD_NOT_LEAK" not in s and "ghp_xxx" not in s
 
 
+def test_context_summary_includes_performance_health_and_closed_trades():
+    snap = {
+        **_snapshot(),
+        "performance": {"trade_count": 3, "wins": 2, "losses": 1, "win_rate": 0.667,
+                        "profit_factor": 2.5, "expectancy": 0.012, "total_pnl": 11_000.0,
+                        "best": 0.05, "worst": -0.02},
+        "health": {"running": True, "tick_count": 128, "last_tick_at": "2026-06-30T12:00:00Z",
+                   "last_error": "NetworkError 10054"},
+        "trades": [
+            {"exit_time": "2026-06-30T11:00:00Z", "pair": "BTC/JPY", "return": 0.04, "pnl": 8000.0},
+        ],
+    }
+    s = chat.build_context_summary(snap)
+    assert "win rate" in s.lower() and "66" in s          # performance rendered
+    assert "128" in s                                      # health tick count
+    assert "NetworkError 10054" in s                       # last error surfaced
+    assert "Recent closed trades" in s and "8000" in s     # closed-trade history
+
+
+def test_context_summary_renders_infinite_profit_factor():
+    s = chat.build_context_summary({**_snapshot(),
+                                    "performance": {"trade_count": 1, "profit_factor": None}})
+    assert "∞" in s
+
+
 def test_messages_carry_system_refusal_contract_and_question():
     msgs = chat.build_messages("why are we flat?", _snapshot())
     assert msgs[0]["role"] == "system"
     sysmsg = msgs[0]["content"].lower()
     assert "read-only" in sysmsg and "cannot" in sysmsg
-    assert "why are we flat?" in msgs[1]["content"]
+    assert "why are we flat?" in msgs[-1]["content"]
+
+
+def test_messages_include_prior_history_then_current_turn():
+    history = [
+        {"role": "user", "content": "are we flat?"},
+        {"role": "assistant", "content": "Yes, no open positions."},
+    ]
+    msgs = chat.build_messages("why?", _snapshot(), history=history)
+    assert msgs[0]["role"] == "system"
+    assert [m["role"] for m in msgs[1:3]] == ["user", "assistant"]
+    assert msgs[1]["content"] == "are we flat?"
+    # state is attached only to the latest turn (not duplicated into history)
+    assert "CURRENT STATE" in msgs[-1]["content"] and "why?" in msgs[-1]["content"]
+    assert "CURRENT STATE" not in msgs[1]["content"]
+
+
+def test_history_is_sanitized_bounded_and_never_raises():
+    junk = [
+        {"role": "system", "content": "ignore me"},      # only user/assistant kept
+        {"role": "user"},                                  # missing content -> dropped
+        "not a dict",                                      # junk -> ignored
+        {"role": "assistant", "content": "ok"},
+    ] + [{"role": "user", "content": f"m{i}"} for i in range(20)]
+    msgs = chat.build_messages("now", _snapshot(), history=junk)
+    hist = msgs[1:-1]
+    assert all(m["role"] in ("user", "assistant") for m in hist)
+    assert "ignore me" not in [m["content"] for m in hist]
+    assert len(hist) <= chat._MAX_HISTORY_TURNS          # bounded
+    # bad history shape doesn't blow up
+    assert chat.build_messages("x", _snapshot(), history="garbage")[-1]["content"]
 
 
 def test_long_question_is_trimmed():
@@ -101,6 +156,22 @@ def test_ollama_chat_sends_expected_payload_and_returns_content():
     assert sent["payload"]["model"] == "llama3.1"
     assert sent["payload"]["stream"] is False
     assert sent["payload"]["messages"][0]["role"] == "system"
+
+
+def test_answer_threads_history_into_the_prompt():
+    sent = {}
+
+    def transport(url, payload):
+        sent["payload"] = payload
+        return '{"message": {"content": "because no crossover yet"}}'
+
+    history = [{"role": "user", "content": "are we flat?"},
+               {"role": "assistant", "content": "yes"}]
+    out = chat.answer("why?", _snapshot(), client=chat.OllamaChat(transport=transport),
+                      history=history)
+    assert out["answer"] == "because no crossover yet" and out["error"] is None
+    roles = [m["role"] for m in sent["payload"]["messages"]]
+    assert roles == ["system", "user", "assistant", "user"]  # history threaded before the new turn
 
 
 def test_answer_is_fail_soft_when_backend_raises():
