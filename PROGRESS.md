@@ -528,6 +528,19 @@ Made the read-only assistant genuinely useful, still within the invariants:
   chips**, and a **Clear chat** button. Live HTTP smoke OK (chips, multi-turn, junk-history
   fail-soft). +5 tests. Suite **532→537**, ruff clean.
 
+### 2026-06-30 (session, cont.) — chat: structured decision-log citations + per-row "explain"
+- **Structured citations (1):** decision-log lines in the prompt are labelled `[D1] [D2] …`; the
+  system prompt tells the model to cite those labels when explaining a past decision. `answer()`
+  returns a `citations` list — `extract_citations()` parses `[D#]` out of the reply and maps each
+  back to the *actual* logged entry (same 1-based index as the context slice, deduped, out-of-range
+  dropped → no hallucinated reference). The `/chat` page renders citations (ref + timestamp + type +
+  pair + reason) under the answer. +4 tests.
+- **Per-row explain button (2):** every decision-log row on the dashboard gets an "explain" link to
+  `/chat?q=<prefilled question about that row>`; the chat page reads `?q=` and auto-asks on load.
+- Demo dashboard now seeds a small decision log so citations are demonstrable offline. Live HTTP
+  smoke OK (explain links present, `?q=` auto-ask wired, `/api/chat` returns resolved citations
+  D1/D2). Suite **537→541**, ruff clean. Still strictly read-only (Inv 1).
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

@@ -21,6 +21,7 @@ fail-soft contract are unit-tested without an Ollama server.
 from __future__ import annotations
 
 import json
+import re
 import urllib.request
 from typing import Callable
 
@@ -31,6 +32,7 @@ _MAX_QUESTION_CHARS = 1000
 _MAX_LOG_LINES = 12
 _MAX_TRADES = 5
 _MAX_HISTORY_TURNS = 6
+_CITE_RE = re.compile(r"\[D(\d+)\]")
 
 SYSTEM_PROMPT = (
     "You are a READ-ONLY assistant embedded in a solo-operator crypto trading dashboard. "
@@ -39,7 +41,9 @@ SYSTEM_PROMPT = (
     "operator asks you to do any of those, reply that you are read-only — all trading is "
     "deterministic and risk-gated — and point them to the manual order form (which still passes "
     "the risk engine) or the kill-switch control. Answer concisely from the STATE only; if the "
-    "state does not contain the answer, say so. Never invent numbers."
+    "state does not contain the answer, say so. Never invent numbers. The decision-log entries are "
+    "labelled [D1], [D2], …; when your answer refers to a specific past decision, cite its label in "
+    "square brackets (e.g. [D2]). Only cite labels that actually appear in the state."
 )
 
 
@@ -121,11 +125,36 @@ def build_context_summary(snapshot: dict) -> str:
     log = snapshot.get("decision_log") or []
     if log:
         lines.append("Recent decisions (newest first):")
-        for e in log[:_MAX_LOG_LINES]:
+        for i, e in enumerate(log[:_MAX_LOG_LINES], start=1):
             lines.append(
-                f"  - {e.get('timestamp')} {e.get('type')} {e.get('pair')} {e.get('detail')}"
+                f"  [D{i}] {e.get('timestamp')} {e.get('type')} {e.get('pair')} {e.get('detail')}"
             )
     return "\n".join(lines)
+
+
+def extract_citations(answer_text: str, snapshot: dict) -> list[dict]:
+    """Map [D#] labels in the model's answer back to the real decision-log entries (deterministic).
+
+    De-duped in order of first appearance; out-of-range labels are dropped. The indexing matches
+    `build_context_summary` exactly (1-based over the same `_MAX_LOG_LINES` slice), so a citation
+    always resolves to the entry the model was shown — the UI can render verifiable references."""
+    log = (snapshot.get("decision_log") or [])[:_MAX_LOG_LINES]
+    cites: list[dict] = []
+    seen: set[int] = set()
+    for m in _CITE_RE.finditer(answer_text or ""):
+        n = int(m.group(1))
+        if n in seen or n < 1 or n > len(log):
+            continue
+        seen.add(n)
+        e = log[n - 1]
+        cites.append({
+            "ref": f"D{n}",
+            "timestamp": e.get("timestamp"),
+            "type": e.get("type"),
+            "pair": e.get("pair"),
+            "detail": e.get("detail"),
+        })
+    return cites
 
 
 def _sanitize_history(history: object) -> list[dict]:
@@ -221,8 +250,9 @@ def answer(question: str, snapshot: dict, *, client: OllamaChat, history: object
     trading loop is unaffected (Inv 2)."""
     q = (question or "").strip()
     if not q:
-        return {"answer": "", "error": "empty question"}
+        return {"answer": "", "error": "empty question", "citations": []}
     try:
-        return {"answer": client.answer(q, snapshot, history), "error": None}
+        text = client.answer(q, snapshot, history)
+        return {"answer": text, "error": None, "citations": extract_citations(text, snapshot)}
     except Exception as e:  # noqa: BLE001 — fail-soft: a chat error must never reach the UI/loop
-        return {"answer": f"(assistant unavailable: {e})", "error": str(e)}
+        return {"answer": f"(assistant unavailable: {e})", "error": str(e), "citations": []}

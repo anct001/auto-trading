@@ -280,8 +280,10 @@ function render(d){
    `<tr><td>${(t.exit_time||"").slice(0,19).replace("T"," ")}</td><td>${t.pair}</td><td>${fmt(t.qty)}</td><td>${fmt(t.entry_price)}</td><td>${fmt(t.exit_price)}</td><td class="${t.return>=0?'ok':'bad'}">${(t.return*100).toFixed(3)}</td><td class="${t.pnl>=0?'ok':'bad'}">${fmt(t.pnl)}</td></tr>`).join("")||"<tr><td class=muted>none yet</td></tr>";
   document.querySelector("#pos tbody").innerHTML=(d.positions||[]).map(p=>
    `<tr><td>${p.pair}</td><td>${fmt(p.qty)}</td><td>${fmt(p.value)}</td><td class="${p.unrealized_pnl>=0?'ok':'bad'}">${fmt(p.unrealized_pnl)}</td><td>${fmt(p.exposure_pct)}</td><td><button onclick="flatten('${p.pair}',${p.qty},${p.price})">Flatten</button></td></tr>`).join("")||"<tr><td class=muted>flat</td></tr>";
-  document.getElementById("log").innerHTML=(d.decision_log||[]).map(e=>
-   `<div>${e.timestamp} <b>${e.type}</b> ${e.pair} ${e.detail}</div>`).join("")||"<div class=muted>no events</div>";
+  document.getElementById("log").innerHTML=(d.decision_log||[]).map(e=>{
+   const qy=encodeURIComponent(`Explain this decision: ${e.timestamp} ${e.type} ${e.pair} ${e.detail||""}`);
+   return `<div>${e.timestamp} <b>${e.type}</b> ${e.pair} ${e.detail} <a href="/chat?q=${qy}" title="Ask the assistant to explain">explain</a></div>`;
+  }).join("")||"<div class=muted>no events</div>";
 }
 async function poll(){try{render(await (await fetch("/api/dashboard")).json());}
  catch(e){document.getElementById("msg").textContent="fetch error: "+e;}}
@@ -715,6 +717,8 @@ def chat_html() -> str:
  .chip{font-size:12px;padding:5px 9px;background:#161a20;border:1px solid #232833;color:#9fb4d6;border-radius:14px;cursor:pointer}
  .chip:hover{border-color:#2c4a6b} #bar{display:flex;gap:8px;align-items:center;margin-bottom:8px}
  #clear{background:#2a2230;font-size:12px;padding:5px 9px}
+ .cites{margin-top:6px;border-top:1px solid #232833;padding-top:4px}
+ .cite{font-size:11px;color:#8b93a1;font-family:monospace} .cite b{color:#6ea8fe}
 </style></head><body>
 <h1>Assistant <a href="/">· dashboard</a> <a href="/orders">· orders</a> <a href="/coin">· coin</a></h1>
 <div class="banner">⚠ Read-only assistant. It explains the bot's current state — it cannot place orders, change
@@ -732,15 +736,20 @@ let hist=[];  // [{role, content}] prior turns, sent for multi-turn context (bou
 function add(cls,meta,text){const w=document.createElement("div");w.className="msg "+cls;
  const m=document.createElement("div");m.className="meta";m.textContent=meta;
  const b=document.createElement("div");b.textContent=text;w.appendChild(m);w.appendChild(b);
- log.appendChild(w);w.scrollIntoView();return b;}
+ log.appendChild(w);w.scrollIntoView();return w;}
+function renderCites(wrap,cites){if(!cites||!cites.length)return;
+ const c=document.createElement("div");c.className="cites";
+ cites.forEach(z=>{const r=document.createElement("div");r.className="cite";
+  r.innerHTML="<b>["+z.ref+"]</b> "+document.createTextNode((z.timestamp||"")+" "+(z.type||"")+" "+(z.pair||"")+" "+(z.detail||"")).textContent;
+  c.appendChild(r);});wrap.appendChild(c);}
 async function ask(text){text=(text||"").trim();if(!text)return;add("you","you",text);
- q.value="";send.disabled=true;const pending=add("bot","assistant","…");
+ q.value="";send.disabled=true;const wrap=add("bot","assistant","…");const body=wrap.lastChild;
  try{const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
    body:JSON.stringify({question:text,history:hist})});const j=await r.json();
-  const ans=j.answer||j.error||"(no answer)";pending.textContent=ans;
+  const ans=j.answer||j.error||"(no answer)";body.textContent=ans;renderCites(wrap,j.citations);
   hist.push({role:"user",content:text});hist.push({role:"assistant",content:ans});
   if(hist.length>12)hist=hist.slice(-12);
- }catch(err){pending.textContent="error: "+err;}
+ }catch(err){body.textContent="error: "+err;}
  send.disabled=false;q.focus();}
 document.getElementById("f").addEventListener("submit",(e)=>{e.preventDefault();ask(q.value);});
 document.getElementById("clear").addEventListener("click",()=>{hist=[];log.innerHTML="";greet();});
@@ -749,6 +758,9 @@ SUGGEST.forEach(s=>{const c=document.createElement("span");c.className="chip";c.
  c.addEventListener("click",()=>ask(s));chips.appendChild(c);});
 function greet(){add("bot","assistant","Ask me about the current state — equity, drawdown, open positions, recent trades, or why the agent is or isn't trading. I remember this conversation; use the chips for quick questions.");}
 greet();
+// deep-link: /chat?q=... (e.g. the "explain" link on a decision-log row) auto-asks on load
+const preset=new URLSearchParams(location.search).get("q");
+if(preset){ask(preset);}
 </script></body></html>"""
 
 
@@ -921,8 +933,17 @@ def build_demo_context() -> OperatorContext:
         return build_order_trade_panel(evs)
 
     def _dashboard() -> dict:
+        from src.events.log import Event
         from src.ui.performance import performance_summary
-        payload = dashboard_payload(state=state, cfg=cfg, prices={pair: price}, killswitch=ks)
+        demo_events = [  # chronological (oldest first) — the model reverses to newest-first
+            Event("OrderSubmitted", "2026-06-28T09:00:00+00:00",
+                  {"pair": pair, "side": "buy", "qty": 0.02}),
+            Event("RiskRejected", "2026-06-28T10:00:00+00:00",
+                  {"pair": pair, "side": "buy", "reasons": ["below_min_notional"]}),
+            Event("SignalGenerated", "2026-06-28T11:59:00+00:00", {"pair": pair, "intent": "hold"}),
+        ]
+        payload = dashboard_payload(state=state, cfg=cfg, prices={pair: price}, killswitch=ks,
+                                    events=demo_events)
         demo_trades = [
             {"exit_time": "2026-06-28T09:00:00+00:00", "pair": pair, "qty": 0.02,
              "entry_price": 9.5e6, "exit_price": 9.9e6, "return": 0.0421, "pnl": 8000.0},

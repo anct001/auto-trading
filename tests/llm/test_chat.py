@@ -83,6 +83,40 @@ def test_context_summary_renders_infinite_profit_factor():
     assert "∞" in s
 
 
+def test_decision_log_lines_are_labelled_for_citation():
+    s = chat.build_context_summary(_snapshot())
+    assert "[D1]" in s  # the single decision-log entry is labelled so the model can cite it
+
+
+def test_extract_citations_maps_labels_to_entries():
+    snap = {**_snapshot(), "decision_log": [
+        {"timestamp": "t1", "type": "RiskRejected", "pair": "BTC/JPY", "detail": "below_min_notional"},
+        {"timestamp": "t2", "type": "SignalGenerated", "pair": "BTC/JPY", "detail": "intent=hold"},
+    ]}
+    cites = chat.extract_citations("We held — see [D2]; the earlier [D1] was a size reject.", snap)
+    # de-duped, order of first appearance, mapped back to the real entries
+    assert [c["ref"] for c in cites] == ["D2", "D1"]
+    assert cites[0]["type"] == "SignalGenerated" and cites[0]["timestamp"] == "t2"
+    assert cites[1]["detail"] == "below_min_notional"
+
+
+def test_extract_citations_ignores_out_of_range_and_dedupes():
+    snap = {**_snapshot(), "decision_log": [
+        {"timestamp": "t1", "type": "RiskRejected", "pair": "BTC/JPY", "detail": "x"}]}
+    cites = chat.extract_citations("[D1] [D1] [D9] [D0]", snap)
+    assert [c["ref"] for c in cites] == ["D1"]  # D9/D0 out of range dropped, D1 de-duped
+
+
+def test_answer_includes_structured_citations():
+    def transport(url, payload):
+        return '{"message": {"content": "We are flat; last action was a reject [D1]."}}'
+
+    out = chat.answer("why flat?", _snapshot(), client=chat.OllamaChat(transport=transport))
+    assert out["error"] is None
+    assert out["citations"] and out["citations"][0]["ref"] == "D1"
+    assert out["citations"][0]["detail"] == "buy BTC/JPY below_min_notional"
+
+
 def test_messages_carry_system_refusal_contract_and_question():
     msgs = chat.build_messages("why are we flat?", _snapshot())
     assert msgs[0]["role"] == "system"
