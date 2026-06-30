@@ -40,3 +40,22 @@ information source*, e.g.: cross-sectional / relative-value across pairs, a real
 sits a strategy out of its bad regime, funding-rate or order-flow signals, or alternative data —
 each still validated forward-only with the deflated-Sharpe discipline. **Until something clears
 the gate, go-live stays blocked — correctly.**
+
+## Follow-up: cross-sectional momentum (a1) + regime filtering (a2) — also no edge
+
+Tried the two "different information source" ideas. Both built, tested, and evaluated honestly:
+
+**a1 — cross-sectional momentum** (`backtest/cross_sectional.py`, `scripts/cross_sectional_search.py`):
+rank a 7-pair basket (BTC/ETH/SOL/XRP/ADA/DOGE/BNB-USDT) each bar, hold the strongest top_k.
+Run on Bybit 1h, 1y: **every config −62% to −90%**, all negative Sharpe — *worse* than equal-weight
+buy-and-hold of the basket (−47%). In a falling market, momentum-chasing rotated into the assets
+about to fall hardest. No edge; arguably anti-edge here.
+
+**a2 — regime filtering** (`strategy/regime_classify.py`, Kaufman Efficiency Ratio → trend/range):
+gate a strategy's entries to its target regime. Added `donchian_20+regime` and `rsi+regime` to the
+search (4h, 2y): the filtered variants were **slightly worse** (donchian Sharpe −1.46 vs −1.28;
+rsi 0.20 vs 0.26) and cut trade counts (worsening the sample). The ER filter didn't rescue them.
+
+**Net:** simple TA, cross-sectional momentum, and regime filtering all fail the deflated-Sharpe
+gate on BTC/crypto. The infrastructure to *test* edges rigorously now exists; the missing piece is
+a genuine signal, which is a research problem, not a coding one. Go-live remains correctly blocked.

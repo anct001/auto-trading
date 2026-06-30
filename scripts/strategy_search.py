@@ -28,6 +28,7 @@ from src.data import feed, quality
 from src.llm.journal import HypothesisJournal
 from src.strategy.donchian_breakout import DonchianBreakout
 from src.strategy.ema_cross import EmaCross
+from src.strategy.regime_classify import RegimeFiltered
 from src.strategy.rsi_reversion import RsiReversion
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +39,11 @@ CANDIDATES = [
     ("rsi_14_30_70", {"period": 14, "low": 30, "high": 70}, "range", lambda: RsiReversion(14, 30, 70)),
     ("donchian_20", {"period": 20}, "trend", lambda: DonchianBreakout(20)),
     ("donchian_55", {"period": 55}, "trend", lambda: DonchianBreakout(55)),
+    # a2: regime-filtered variants — does sitting out the wrong regime help?
+    ("donchian_20+regime", {"period": 20, "regime": "trend"}, "trend",
+     lambda: RegimeFiltered(DonchianBreakout(20))),
+    ("rsi+regime", {"period": 14, "regime": "range"}, "range",
+     lambda: RegimeFiltered(RsiReversion(14, 30, 70))),
 ]
 
 

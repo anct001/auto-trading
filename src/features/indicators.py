@@ -75,6 +75,22 @@ def rsi(values: Iterable[float], period: int = 14) -> pd.Series:
     return out
 
 
+def efficiency_ratio(values: Iterable[float], period: int = 20) -> pd.Series:
+    """Kaufman Efficiency Ratio in [0, 1]: |net move| / sum(|bar moves|) over ``period``.
+
+    ER ≈ 1 → a clean directional move (trend); ER ≈ 0 → choppy back-and-forth (range). Causal;
+    the first ``period`` bars are NaN. The single ER path for deterministic regime classification.
+    """
+    if period <= 0:
+        raise ValueError(f"efficiency_ratio period must be positive, got {period}")
+    s = pd.Series(list(values), dtype="float64")
+    net = (s - s.shift(period)).abs()
+    noise = s.diff().abs().rolling(period).sum()
+    er = net / noise
+    er[noise == 0] = 0.0  # no movement → no trend
+    return er
+
+
 def with_emas(
     df: pd.DataFrame, periods: Iterable[int], *, source: str = "close"
 ) -> pd.DataFrame:
