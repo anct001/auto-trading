@@ -451,6 +451,17 @@ edge** (−22%/2.5y). Instead, added the legitimate path + pro-quant gaps:
   sample for cost (1–21 trades). Buy & hold also lost (−3.6..−4.3%). Logged in
   `docs/research/strategy_search_findings.md`. Conclusion: a real edge needs a *different
   information source*, not more tuning — go-live stays correctly blocked. Suite **504→508**.
+
+### 2026-06-28 — a1 cross-sectional + a2 regime classifier (both: no edge)
+- **a1**: `backtest/cross_sectional.py` (rank basket, hold top_k) + `scripts/cross_sectional_search.py`.
+  7-pair Bybit basket 1y → every config −62..−90%, *worse* than equal-weight hold (−47%):
+  momentum-chasing into a bear market. No edge.
+- **a2**: `indicators.efficiency_ratio` (Kaufman) + `strategy/regime_classify.py` (deterministic
+  trend/range + `RegimeFiltered` wrapper). Regime-filtered donchian/rsi were slightly WORSE +
+  under-sampled — filter doesn't rescue them.
+- Conclusion (docs/research/strategy_search_findings.md updated): TA + cross-sectional + regime
+  filtering ALL fail deflated-Sharpe on crypto. Edge is a research problem, not a coding one.
+  Suite **508→518**, ruff clean.
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
