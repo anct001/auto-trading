@@ -11,7 +11,8 @@ import math
 
 import pandas as pd
 
-from src.features.indicators import ema
+from src.features.indicators import ema, rsi
+from src.strategy.regime_classify import latest_regime
 from src.ui.screener import readouts_from_ohlcv
 
 
@@ -27,12 +28,13 @@ def build_coin_detail(
     """K-line candles (last ``max_candles``) + EMA overlays + readouts for ``pair`` (read-only)."""
     n = len(df)
     if n == 0:
-        return {"pair": pair, "candles": [], "overlays": {"ema_fast": [], "ema_slow": []},
+        return {"pair": pair, "candles": [], "overlays": {"ema_fast": [], "ema_slow": [], "rsi": []},
                 "readouts": readouts_from_ohlcv(df, ema_fast=ema_fast, ema_slow=ema_slow,
-                                                atr_period=atr_period)}
+                                                atr_period=atr_period), "regime": "range"}
 
     fast = ema(df["close"], ema_fast)
     slow = ema(df["close"], ema_slow)
+    rsi14 = rsi(df["close"], 14)
     start = max(0, n - max_candles)
     candles = [
         {"t": str(df["timestamp"].iloc[i]), "time": int(df["timestamp"].iloc[i].timestamp()),
@@ -47,7 +49,9 @@ def build_coin_detail(
         "overlays": {
             "ema_fast": [_num(fast.iloc[i]) for i in range(start, n)],
             "ema_slow": [_num(slow.iloc[i]) for i in range(start, n)],
+            "rsi": [_num(rsi14.iloc[i]) for i in range(start, n)],
         },
         "readouts": readouts_from_ohlcv(df, ema_fast=ema_fast, ema_slow=ema_slow,
                                         atr_period=atr_period),
+        "regime": latest_regime(df),
     }

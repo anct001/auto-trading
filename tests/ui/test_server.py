@@ -192,6 +192,16 @@ def test_demo_agentview_provider():
     assert ctx.agentview("ZZZ/JPY")["traded"] is False
 
 
+def test_pro_page_tradingview_style():
+    r = handle_request("GET", "/pro", None, _ctx())
+    assert r.status == 200 and r.content_type.startswith("text/html")
+    assert "/static/lightweight-charts.js" in r.body          # vendored LWC, not a CDN
+    assert "addCandlestickSeries" in r.body and "ensureCharts" in r.body
+    assert 'id="rsi"' in r.body and "RSI(14)" in r.body        # synced RSI sub-pane
+    for api in ("/api/coin", "/api/orderbook", "/api/markets", "/api/agentview", "/api/stream"):
+        assert api in r.body
+
+
 def test_metrics_endpoint_prometheus():
     r = handle_request("GET", "/metrics", None, _ctx())
     assert r.status == 200 and r.content_type.startswith("text/plain")

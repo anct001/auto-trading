@@ -104,6 +104,11 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
             return Response(405, {"error": "read-only endpoint"})
         return Response(200, terminal_html(), content_type="text/html; charset=utf-8")
 
+    if path == "/pro":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, pro_html(), content_type="text/html; charset=utf-8")
+
     if path == "/markets":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
@@ -193,7 +198,7 @@ def index_html() -> str:
  body.light th,body.light td{border-color:#e5e8ee} body.light .bar{background:#e5e8ee}
  body.light button{background:#eceef2;color:#1c2230;border-color:#cdd3dd}
 </style></head><body>
-<h1>Operator dashboard <a href="/terminal">· terminal</a> <a href="/markets">· markets</a> <a href="/orders">· orders</a> <span id="ks" class="muted"></span></h1>
+<h1>Operator dashboard <a href="/pro">· pro</a> <a href="/terminal">· terminal</a> <a href="/markets">· markets</a> <a href="/orders">· orders</a> <span id="ks" class="muted"></span></h1>
 <div class="grid" id="cards"></div>
 <div class="card" style="min-width:100%"><div class="lbl">Equity curve</div><svg id="eq" viewBox="0 0 900 130" preserveAspectRatio="none"></svg></div>
 <div class="grid" id="perf"></div>
@@ -394,6 +399,115 @@ applyOrder();enableDrag();
 renderDash();renderMarkets();renderCoin();renderTape();
 setInterval(()=>{renderMarkets();renderCoin();renderTape();},6000);
 try{const es=new EventSource("/api/stream");es.onmessage=ev=>{try{renderDash(JSON.parse(ev.data));}catch(_){}};}catch(_){ setInterval(renderDash,5000);}
+</script></body></html>"""
+
+
+def pro_html() -> str:
+    """TradingView-style comprehensive dashboard (§12): Lightweight Charts main pane (candles +
+    volume + EMA) with a time-synced RSI sub-pane, KPI strip, order book + depth, watchlist,
+    positions (flatten), closed trades, and the agent-view + regime — over the existing JSON APIs.
+    Self-hosted; the chart lib is the vendored Apache-2.0 build served at /static/. Read-only
+    except the kill-switch + flatten (Inv 9)."""
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Pro terminal</title>
+<style>
+ *{box-sizing:border-box} body{font:12px ui-monospace,Menlo,Consolas,monospace;background:#0b0e14;color:#cdd3de;margin:0;padding:8px}
+ a{color:#6ea8fe;text-decoration:none} .ok{color:#3fd07f} .bad{color:#f06a6a} .warn{color:#e6a23c} .mut{color:#5f6b7a}
+ .grid{display:grid;gap:8px;grid-template-columns:repeat(12,1fr)}
+ .tile{background:#11151c;border:1px solid #1e2530;border-radius:6px;padding:8px;overflow:auto}
+ .t{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#7a8699;margin-bottom:6px}
+ table{border-collapse:collapse;width:100%} td,th{padding:2px 6px;text-align:right;white-space:nowrap}
+ td:first-child,th:first-child{text-align:left} .kpi{display:inline-flex;flex-direction:column;margin-right:16px}
+ .kpi b{font-size:16px} button{background:#222a36;color:#cdd3de;border:1px solid #313b4a;border-radius:4px;padding:3px 8px;cursor:pointer;font:inherit}
+ input{background:#0b0e14;color:#cdd3de;border:1px solid #313b4a;border-radius:4px;padding:3px;font:inherit;width:90px}
+ #tfbtns button{padding:1px 7px}
+</style></head><body>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+ <b>PRO TERMINAL</b> <span id="ks" class="mut"></span>
+ <span>pair <input id="pair" value="BTC/USDT"><button onclick="setPair()">go</button>
+  <span id="tfbtns"></span> · <a href="/terminal">terminal</a> <a href="/">classic</a>
+  <button onclick="toggleTheme()">theme</button> <button class="bad" onclick="engage()">KILL</button></span></div>
+<div class="tile" id="kpis" style="margin-bottom:8px"></div>
+<div class="grid">
+ <div class="tile" style="grid-column:span 8">
+   <div class="t">Chart · <span id="cpair"></span> · regime <span id="regime" class="mut"></span></div>
+   <div id="chart" style="height:340px"></div>
+   <div class="t" style="margin-top:6px">RSI(14)</div><div id="rsi" style="height:120px"></div>
+ </div>
+ <div class="tile" style="grid-column:span 4"><div class="t">Order book <span id="spread" class="mut"></span></div>
+   <div id="depth" style="height:90px"></div><table id="ob"><tbody></tbody></table></div>
+ <div class="tile" style="grid-column:span 3"><div class="t">Watchlist</div><table id="watch"><tbody></tbody></table></div>
+ <div class="tile" style="grid-column:span 3"><div class="t">Agent view</div><div id="agent"></div></div>
+ <div class="tile" style="grid-column:span 3"><div class="t">Positions</div><table id="pos"><tbody></tbody></table></div>
+ <div class="tile" style="grid-column:span 3"><div class="t">Closed trades</div><table id="trades"><tbody></tbody></table></div>
+</div>
+<script src="/static/lightweight-charts.js"></script>
+<script>
+const NS="http://www.w3.org/2000/svg",C={ok:"#3fd07f",bad:"#f06a6a"};
+let PAIR=new URLSearchParams(location.search).get("pair")||"BTC/USDT",TF="";const TFS=["1h","4h","1d"];
+document.getElementById("pair").value=PAIR;
+const f=(n,d=2)=>n==null?"—":Number(n).toLocaleString(undefined,{maximumFractionDigits:d});
+const j=async u=>{try{return await (await fetch(u)).json();}catch(e){return null;}};
+function setPair(){PAIR=document.getElementById("pair").value.toUpperCase();history.replaceState(0,"","?pair="+encodeURIComponent(PAIR));drawCoin();drawBook();drawAgent();}
+function setTF(t){TF=t;tfBtns();drawCoin();}
+function tfBtns(){document.getElementById("tfbtns").innerHTML=TFS.map(t=>`<button onclick="setTF('${t}')" style="border-color:${t===(TF||TFS[0])?'#6ea8fe':'#313b4a'}">${t}</button>`).join(" ");}
+function toggleTheme(){document.body.style.background=document.body.style.background==="rgb(245, 246, 248)"?"#0b0e14":"#f5f6f8";}
+async function engage(){await fetch("/api/killswitch/engage",{method:"POST"});}
+async function flatten(p,q,pr){if(!confirm("Flatten "+p+"?"))return;await fetch("/api/order",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({side:"sell",pair:p,qty:q,price:pr})});}
+let mc,rc,cs,vol,ef,es,rl;
+function ensureCharts(){ if(mc)return;
+ const o={layout:{background:{color:'#11151c'},textColor:'#cdd3de'},grid:{vertLines:{color:'#1e2530'},horzLines:{color:'#1e2530'}},rightPriceScale:{borderColor:'#1e2530'},timeScale:{borderColor:'#1e2530',timeVisible:true,secondsVisible:false},crosshair:{mode:1}};
+ const ce=document.getElementById("chart"),re=document.getElementById("rsi");
+ mc=LightweightCharts.createChart(ce,{...o,width:ce.clientWidth,height:340});
+ rc=LightweightCharts.createChart(re,{...o,width:re.clientWidth,height:120});
+ cs=mc.addCandlestickSeries({upColor:C.ok,downColor:C.bad,borderVisible:false,wickUpColor:C.ok,wickDownColor:C.bad});
+ vol=mc.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'v'});mc.priceScale('v').applyOptions({scaleMargins:{top:0.85,bottom:0}});
+ ef=mc.addLineSeries({color:'#e6a23c',lineWidth:1,lastValueVisible:false,priceLineVisible:false});
+ es=mc.addLineSeries({color:'#6ea8fe',lineWidth:1,lastValueVisible:false,priceLineVisible:false});
+ rl=rc.addLineSeries({color:'#b48ead',lineWidth:1,lastValueVisible:false});
+ rl.createPriceLine({price:70,color:'#5f6b7a',lineStyle:2,lineWidth:1});
+ rl.createPriceLine({price:30,color:'#5f6b7a',lineStyle:2,lineWidth:1});
+ const sync=(a,b)=>a.timeScale().subscribeVisibleLogicalRangeChange(r=>{if(r)b.timeScale().setVisibleLogicalRange(r);});
+ sync(mc,rc);sync(rc,mc);
+ window.addEventListener("resize",()=>{mc.applyOptions({width:ce.clientWidth});rc.applyOptions({width:re.clientWidth});});}
+async function drawCoin(){tfBtns();ensureCharts();document.getElementById("cpair").textContent=PAIR+(TF?(" · "+TF):"");
+ const d=await j("/api/coin?pair="+encodeURIComponent(PAIR)+(TF?("&tf="+encodeURIComponent(TF)):""));const c=(d&&d.candles)||[];
+ document.getElementById("regime").textContent=(d&&d.regime)||"—";
+ if(!c.length)return;
+ cs.setData(c.map(k=>({time:k.time,open:k.o,high:k.h,low:k.l,close:k.c})));
+ vol.setData(c.map(k=>({time:k.time,value:k.v,color:k.c>=k.o?'rgba(63,208,127,.4)':'rgba(240,106,106,.4)'})));
+ const ov=d.overlays||{},m=(a)=>c.map((k,i)=>({time:k.time,value:(a||[])[i]})).filter(p=>p.value!=null);
+ ef.setData(m(ov.ema_fast));es.setData(m(ov.ema_slow));rl.setData(m(ov.rsi));}
+async function drawBook(){const b=await j("/api/orderbook?pair="+encodeURIComponent(PAIR));if(!b)return;
+ document.getElementById("spread").textContent=b.mid==null?"":`mid ${f(b.mid)} · ${f(b.spread_pct,3)}%`;
+ const asks=(b.asks||[]).slice().reverse(),bids=b.bids||[];
+ document.querySelector("#ob tbody").innerHTML=asks.slice(-6).map(r=>`<tr><td class=bad>${f(r.price)}</td><td>${f(r.amount,4)}</td></tr>`).join("")+
+  bids.slice(0,6).map(r=>`<tr><td class=ok>${f(r.price)}</td><td>${f(r.amount,4)}</td></tr>`).join("")||'<tr><td class=mut>no book</td></tr>';
+ const svg=document.getElementById("depth");svg.innerHTML="";const W=svg.clientWidth||280,H=90,el=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
+ const s=document.createElementNS(NS,"svg");s.setAttribute("width",W);s.setAttribute("height",H);
+ const mx=Math.max(1,...(b.bids||[]).map(r=>r.cum),...(b.asks||[]).map(r=>r.cum));
+ (b.bids||[]).forEach((r,i,a)=>s.appendChild(el("rect",{x:0,y:i*H/Math.max(1,a.length),width:r.cum/mx*W/2,height:H/Math.max(1,a.length)-1,fill:C.ok,opacity:.5})));
+ (b.asks||[]).forEach((r,i,a)=>s.appendChild(el("rect",{x:W/2,y:i*H/Math.max(1,a.length),width:r.cum/mx*W/2,height:H/Math.max(1,a.length)-1,fill:C.bad,opacity:.5})));
+ svg.appendChild(s);}
+async function drawAgent(){const a=await j("/api/agentview?pair="+encodeURIComponent(PAIR));const e=document.getElementById("agent");if(!a){e.textContent="";return;}
+ if(a.traded===false){e.innerHTML='<span class=mut>not in traded set</span>';return;}
+ e.innerHTML=`signal <b>${a.signal||"?"}</b> · ${a.acting?'<b class=ok>ACTING</b>':'<span class=mut>idle</span>'} ${(a.blocked_by||[]).length?'· '+a.blocked_by.join(", "):''}`+
+  `<br>regime ${a.regime_enabled?'on':'OFF'} · sentiment×${f(a.sentiment_haircut??1,2)} · ${a.killswitch_engaged?'<b class=bad>KILLED</b>':'armed'}`;}
+async function drawMarkets(){const m=await j("/api/markets");if(!m)return;
+ document.querySelector("#watch tbody").innerHTML=(m.overview||[]).map(r=>
+  `<tr onclick="document.getElementById('pair').value='${r.pair}';setPair()" style="cursor:pointer"><td>${r.pair}</td><td>${f(r.close)}</td><td class="${r.change_pct>=0?'ok':'bad'}">${f(r.change_pct,2)}%</td></tr>`).join("");}
+function renderKpis(d){const pf=d.performance||{},h=d.health||{};
+ const k=[["Equity",f(d.equity),""],["Day%",f(d.day_return_pct,2),d.day_return_pct>=0?"ok":"bad"],
+  ["DD%",f(d.drawdown_pct,2),"warn"],["Win%",pf.trade_count?f(pf.win_rate*100,0):"—",""],
+  ["PF",pf.trade_count?(pf.profit_factor==null?"∞":f(pf.profit_factor)):"—",""],["P&L",f(pf.total_pnl||0),(pf.total_pnl>=0?"ok":"bad")]];
+ document.getElementById("kpis").innerHTML=k.map(x=>`<span class="kpi"><span class="t">${x[0]}</span><b class="${x[2]}">${x[1]}</b></span>`).join("");
+ document.getElementById("ks").innerHTML=(d.killswitch_engaged?'<span class=bad>KILLED</span>':'<span class=ok>armed</span>')+(h.last_tick_at?` · ${h.last_tick_at.slice(11,19)}Z`:"")+(h.last_error?` · <span class=warn>⚠</span>`:"");
+ document.querySelector("#pos tbody").innerHTML=(d.positions||[]).map(p=>`<tr><td>${p.pair}</td><td>${f(p.qty,5)}</td><td class="${p.unrealized_pnl>=0?'ok':'bad'}">${f(p.unrealized_pnl)}</td><td><button onclick="flatten('${p.pair}',${p.qty},${p.price})">×</button></td></tr>`).join("")||'<tr><td class=mut>flat</td></tr>';
+ document.querySelector("#trades tbody").innerHTML=(d.trades||[]).slice(0,8).map(t=>`<tr><td>${(t.exit_time||"").slice(5,16)}</td><td class="${t.pnl>=0?'ok':'bad'}">${f(t.pnl)}</td></tr>`).join("")||'<tr><td class=mut>none</td></tr>';}
+async function pollDash(){const d=await j("/api/dashboard");if(d)renderKpis(d);}
+drawCoin();drawBook();drawAgent();drawMarkets();pollDash();
+setInterval(()=>{drawCoin();drawBook();drawAgent();drawMarkets();},6000);
+try{const ev=new EventSource("/api/stream");ev.onmessage=e=>{try{renderKpis(JSON.parse(e.data));}catch(_){}}}catch(_){setInterval(pollDash,5000);}
 </script></body></html>"""
 
 

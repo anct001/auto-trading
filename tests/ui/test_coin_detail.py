@@ -30,6 +30,8 @@ def test_overlays_align_with_candles():
     assert len(d["candles"]) == 120
     assert len(d["overlays"]["ema_fast"]) == 120
     assert len(d["overlays"]["ema_slow"]) == 120
+    assert len(d["overlays"]["rsi"]) == 120          # RSI sub-pane series
+    assert d["regime"] in ("trend", "range")          # deterministic regime label
 
 
 def test_readouts_present():

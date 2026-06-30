@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "operator-ui-demo",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "src.ui.server"],
+      "port": 8787
+    },
+    {
+      "name": "dry-run-paper-ui",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "src.dry_run", "--data-exchange", "bybit", "--pair", "BTC/USDT", "--timeframe", "1h", "--iterations", "0", "--serve-ui", "--ui-port", "8788"],
+      "port": 8788
+    }
+  ]
+}
