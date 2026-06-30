@@ -462,6 +462,14 @@ edge** (−22%/2.5y). Instead, added the legitimate path + pro-quant gaps:
 - Conclusion (docs/research/strategy_search_findings.md updated): TA + cross-sectional + regime
   filtering ALL fail deflated-Sharpe on crypto. Edge is a research problem, not a coding one.
   Suite **508→518**, ruff clean.
+
+### 2026-06-28 — full-autonomy pass: bug-hunt + `/pro` TradingView-style dashboard
+- **Bug-hunt** (probed every endpoint on the live `:8788` dry-run → all 200/valid-JSON; reviewed
+  degenerate-index paths → already guarded): **no real defect** — integration layer is clean.
+- **`/pro` page**: vendored Lightweight Charts main pane (candles+volume+EMA) with a **time-synced
+  RSI(14) sub-pane**, KPI strip (SSE), order book + depth, watchlist, agent-view+regime, positions
+  (flatten), trades. coin payload enriched with `overlays.rsi` + `regime`. `.claude/launch.json`
+  added (preview-tool dev-server configs). Suite **518→519**, ruff clean. Served live on :8788.
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
