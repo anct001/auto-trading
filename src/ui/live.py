@@ -24,12 +24,22 @@ _GOOD_EXCHANGE = {"spot_mode": True, "leverage": 1, "margin_disabled": True,
                   "futures_disabled": True, "reduce_only_on_exit": True}
 
 
-def build_live_context(runner) -> OperatorContext:
-    """Build an OperatorContext backed by a live ``DryRunner`` (see module docstring)."""
+def build_live_context(
+    runner, *, chat_model: str = "llama3.1", chat_host: str = "http://localhost:11434"
+) -> OperatorContext:
+    """Build an OperatorContext backed by a live ``DryRunner`` (see module docstring).
+
+    ``chat_model``/``chat_host`` configure the READ-ONLY operator assistant (Inv 1): it is given a
+    snapshot of the (already-redacted) dashboard payload and can only explain it. If Ollama is
+    down the chat endpoint returns a fail-soft 'unavailable' message — the dashboard and the
+    trading loop are unaffected (Inv 2)."""
+    from src.llm.chat import OllamaChat
+    from src.llm.chat import answer as _chat_answer
     from src.risk import engine
 
     cfg = runner.loop.cfg
     market = runner.loop.market
+    chat_client = OllamaChat(model=chat_model, host=chat_host)
 
     def _dashboard() -> dict:
         from src.ui.performance import performance_summary
@@ -139,6 +149,11 @@ def build_live_context(runner) -> OperatorContext:
             price=float(body.get("price", default_price) or default_price),
         )
 
+    def _chat(body: dict) -> dict:
+        # READ-ONLY operator assistant (Inv 1): explains the live dashboard snapshot, never acts.
+        # Off the trading path (Inv 2) — runs only on this UI thread when the operator asks.
+        return _chat_answer(str(body.get("question", "")), _dashboard(), client=chat_client)
+
     return OperatorContext(dashboard=_dashboard, preview=_preview, killswitch=runner.killswitch,
                            orders=_orders, place=_place, orderbook=_orderbook, agentview=_agentview,
-                           coin=_coin, markets=_markets, trades_tape=_trades_tape)
+                           coin=_coin, markets=_markets, trades_tape=_trades_tape, chat=_chat)

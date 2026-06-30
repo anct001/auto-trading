@@ -38,6 +38,7 @@ class OperatorContext:
     orderbook: Callable[[str], dict] | None = None  # pair -> order-book depth view
     agentview: Callable[[str], dict] | None = None  # pair -> agent-view overlay (signal/regime/sentiment)
     trades_tape: Callable[[str], dict] | None = None  # pair -> recent public market trades (tape)
+    chat: Callable[[dict], dict] | None = None  # body{question} -> {answer,error} READ-ONLY (Inv 1); None = disabled
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,23 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
         except (ValueError, TypeError) as e:
             return Response(400, {"error": f"invalid request body: {e}"})
 
+    if path == "/chat":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, chat_html(), content_type="text/html; charset=utf-8")
+
+    if path == "/api/chat":
+        # POST carries the operator's question, but the assistant is strictly READ-ONLY (Inv 1):
+        # it explains state and cannot place orders or change anything. It reads no UI write path.
+        if method != "POST":
+            return Response(405, {"error": "use POST"})
+        if ctx.chat is None:
+            return Response(404, {"error": "chat assistant not enabled"})
+        try:
+            return Response(200, ctx.chat(body or {}))
+        except (ValueError, TypeError) as e:
+            return Response(400, {"error": f"invalid request body: {e}"})
+
     if path == "/api/killswitch/engage":
         if method != "POST":
             return Response(405, {"error": "use POST"})
@@ -204,7 +222,7 @@ def index_html() -> str:
  body.light th,body.light td{border-color:#e5e8ee} body.light .bar{background:#e5e8ee}
  body.light button{background:#eceef2;color:#1c2230;border-color:#cdd3dd}
 </style></head><body>
-<h1>Operator dashboard <a href="/pro">· pro</a> <a href="/terminal">· terminal</a> <a href="/markets">· markets</a> <a href="/orders">· orders</a> <span id="ks" class="muted"></span></h1>
+<h1>Operator dashboard <a href="/pro">· pro</a> <a href="/terminal">· terminal</a> <a href="/markets">· markets</a> <a href="/orders">· orders</a> <a href="/chat">· assistant</a> <span id="ks" class="muted"></span></h1>
 <div class="grid" id="cards"></div>
 <div class="card" style="min-width:100%"><div class="lbl">Equity curve</div><svg id="eq" viewBox="0 0 900 130" preserveAspectRatio="none"></svg></div>
 <div class="grid" id="perf"></div>
@@ -674,6 +692,49 @@ refresh();setInterval(refresh,5000);
 </script></body></html>"""
 
 
+def chat_html() -> str:
+    """Read-only operator chat page (Inv 1). Asks /api/chat; the assistant only explains state.
+
+    Self-contained, no CDN. A persistent banner states the assistant cannot trade, so the operator
+    is never misled into expecting it to act — all trading stays on the deterministic, risk-gated
+    manual controls (/orders) and the kill-switch (/)."""
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Assistant (read-only)</title>
+<style>
+ body{font:14px system-ui,sans-serif;background:#0f1115;color:#d7dbe0;margin:0;padding:16px}
+ h1{font-size:16px;margin:0 0 8px} a{color:#6ea8fe}
+ .banner{background:#2a2030;border:1px solid #4a3a2a;color:#e6a23c;padding:8px 10px;border-radius:6px;margin-bottom:12px;font-size:12px}
+ #log{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+ .msg{padding:8px 10px;border-radius:8px;max-width:80%;white-space:pre-wrap;line-height:1.4}
+ .you{align-self:flex-end;background:#1b3a5b} .bot{align-self:flex-start;background:#1b2230}
+ .meta{font-size:11px;color:#8b93a1;margin-bottom:2px}
+ form{display:flex;gap:8px} input{flex:1;padding:8px;background:#161a20;border:1px solid #232833;color:#d7dbe0;border-radius:6px}
+ button{padding:8px 14px;background:#2c4a6b;color:#fff;border:0;border-radius:6px;cursor:pointer}
+ button:disabled{opacity:.5;cursor:default} .muted{color:#8b93a1}
+</style></head><body>
+<h1>Assistant <a href="/">· dashboard</a> <a href="/orders">· orders</a> <a href="/coin">· coin</a></h1>
+<div class="banner">⚠ Read-only assistant. It explains the bot's current state — it cannot place orders, change
+ limits, or touch the kill-switch. All trading is deterministic and risk-gated.</div>
+<div id="log"></div>
+<form id="f"><input id="q" placeholder="Ask about equity, positions, why we're flat, the last rejection…" autocomplete="off">
+ <button id="send">Ask</button></form>
+<script>
+const log=document.getElementById("log"),q=document.getElementById("q"),send=document.getElementById("send");
+function add(cls,meta,text){const w=document.createElement("div");w.className="msg "+cls;
+ w.innerHTML='<div class="meta">'+meta+'</div>'+document.createTextNode(text).textContent;
+ log.appendChild(w);w.scrollIntoView();}
+document.getElementById("f").addEventListener("submit",async(e)=>{e.preventDefault();
+ const text=q.value.trim();if(!text)return;add("you","you",text);q.value="";send.disabled=true;
+ add("bot","assistant","…");const pending=log.lastChild;
+ try{const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
+   body:JSON.stringify({question:text})});const j=await r.json();
+  pending.innerHTML='<div class="meta">assistant</div>'+document.createTextNode(j.answer||j.error||"(no answer)").textContent;
+ }catch(err){pending.innerHTML='<div class="meta">assistant</div>'+document.createTextNode("error: "+err).textContent;}
+ send.disabled=false;q.focus();});
+add("bot","assistant","Ask me about the current state — equity, drawdown, open positions, or why the agent is or isn't trading.");
+</script></body></html>"""
+
+
 def serve(ctx: OperatorContext, *, host: str = "127.0.0.1", port: int = 8787) -> None:
     """Thin stdlib HTTP adapter around handle_request (not unit-tested — sockets).
 
@@ -858,6 +919,17 @@ def build_demo_context() -> OperatorContext:
                              "timeframe": "1h"}
         return payload
 
+    def _chat(body: dict) -> dict:
+        # demo assistant: a canned transport so /chat is navigable offline (no Ollama). The real
+        # read-only assistant is wired in build_live_context against a local Ollama server.
+        from src.llm.chat import OllamaChat
+        from src.llm.chat import answer as _ans
+        canned = ('{"message":{"content":"(demo assistant) I am read-only — I explain state but '
+                  'cannot trade. This demo has fixed data; run --serve-ui with Ollama for live '
+                  'answers."}}')
+        client = OllamaChat(transport=lambda url, payload: canned)
+        return _ans(str(body.get("question", "")), _dashboard(), client=client)
+
     return OperatorContext(
         dashboard=_dashboard,
         preview=lambda body: preview_payload(
@@ -871,6 +943,7 @@ def build_demo_context() -> OperatorContext:
         orderbook=_orderbook,
         agentview=_agentview,
         trades_tape=_trades_tape,
+        chat=_chat,
     )
 
 

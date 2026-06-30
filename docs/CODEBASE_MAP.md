@@ -60,12 +60,13 @@ autonomous-crypto-trading-agent/
 │   │   ├── sentiment.py          # bounded size-haircut (FLOOR ≥ 0.5; default 1.0 = off) + state model
 │   │   ├── state_io.py           # sentiment_state.json read/write (TTL, fail-to-neutral)
 │   │   ├── journal.py            # §15 hypothesis journal + count_trials (§5 denominator)
-│   │   └── hypothesis_gen.py     # offline LLM hypothesis proposer (human-gated, strict param budget)
+│   │   ├── hypothesis_gen.py     # offline LLM hypothesis proposer (human-gated, strict param budget)
+│   │   └── chat.py               # READ-ONLY operator assistant (explains state; imports no order path — Inv 1)
 │   ├── events/                   # §15 append-only event log (immutable, secret-redacted)
 │   │   └── log.py
 │   └── ui/                       # §12 operator surfaces (read-only + kill-switch + gated order)
 │       ├── api.py                # JSON service layer (dashboard/preview/kill-switch payloads)
-│       ├── server.py             # stdlib-http transport: pure router + dashboard/markets/coin/orders pages + demo
+│       ├── server.py             # stdlib-http transport: pure router + dashboard/markets/coin/orders/chat pages + demo
 │       ├── live.py               # OperatorContext over a LIVE DryRunner (dry_run.py --serve-ui)
 │       ├── preview.py            # manual-order pre-trade risk preview (runs the exact engine, Inv 9)
 │       ├── dashboard/model.py    # read-only §12 control-dashboard model (equity/limits/exposure/log)

@@ -494,6 +494,25 @@ reach the exchange:
   Fixed in the router: `/api/preview` and `/api/order` now catch `(ValueError, TypeError)` → **400**
   `invalid request body`. Test `test_malformed_write_body_is_400_not_a_crash`. Suite **519→520**.
 
+### 2026-06-30 (session, cont.) — operator chat assistant (READ-ONLY, explain-only)
+Added a real chat UI the operator can ask about the bot's state — built within the invariants
+(this is the only safe shape for an LLM chat here):
+- `src/llm/chat.py` — the assistant. **Inv 1 by construction:** the module imports NOTHING from
+  the risk/execution/order path (an AST import-safety test pins it), so there is provably no path
+  from a chat reply to an order. **Inv 2:** off the fast loop — runs only on the UI thread when the
+  operator asks; Ollama down → fail-soft 'unavailable', trading unaffected. **Inv 6:**
+  `build_context_summary` is a strict field whitelist over the (already-redacted) dashboard
+  snapshot, so a new/secret field can't leak into the prompt. Strong system prompt REFUSES to act
+  (place/size/limit/kill-switch) and points to the deterministic risk-gated controls. Ollama
+  `/api/chat` backend, transport injected → tested offline. +11 tests.
+- `ui/server.py` — `OperatorContext.chat`, `POST /api/chat` (404 when disabled, 400 on bad body,
+  405 on GET), `GET /chat` self-contained page (persistent read-only banner), nav link from the
+  dashboard. `chat_html()`. Demo context wires a canned transport so `/chat` is navigable offline.
+- `ui/live.py` — `_chat` wires the live dashboard snapshot to an `OllamaChat` client (model/host
+  configurable); `dry_run.py --chat-model` (default llama3.1). Live HTTP smoke OK (page + answer).
+- Suite **520→532**, ruff clean. The assistant cannot trade — all trading stays on the manual
+  risk-gated order form (Inv 9) and the kill-switch.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

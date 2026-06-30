@@ -62,6 +62,20 @@ def test_malformed_write_body_is_400_not_a_crash():
         assert r.status == 400 and "error" in r.body, path
 
 
+def test_chat_disabled_is_404_enabled_returns_answer():
+    # default ctx has chat=None -> the assistant endpoint is disabled
+    assert handle_request("POST", "/api/chat", {"question": "hi"}, _ctx()).status == 404
+    ctx = OperatorContext(
+        dashboard=lambda: {}, preview=lambda b: {}, killswitch=KillSwitch(),
+        chat=lambda body: {"answer": "you are flat", "error": None},
+    )
+    r = handle_request("POST", "/api/chat", {"question": "why flat?"}, ctx)
+    assert r.status == 200 and r.body["answer"] == "you are flat"
+    # the assistant is read-only: GET /chat serves a page, POST is required for the API
+    assert handle_request("GET", "/chat", None, ctx).status == 200
+    assert handle_request("GET", "/api/chat", None, ctx).status == 405
+
+
 def test_unknown_path_is_404():
     assert handle_request("GET", "/api/nope", None, _ctx()).status == 404
 
