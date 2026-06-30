@@ -443,6 +443,14 @@ edge** (−22%/2.5y). Instead, added the legitimate path + pro-quant gaps:
   one shared journal (§5). Run on real Bybit 1y: **ALL 5 REJECTED** (OOS Sharpe negative, DSR ≪
   0.95) → **no validated edge**. The concrete reason real-money testing is blocked (on top of §14).
 - Full suite **493→504**, ruff clean.
+
+### 2026-06-28 — edge research (chose "find an edge"): buy-and-hold benchmark + multi-TF search
+- `backtest/benchmark.py` `buy_and_hold` baseline; search now requires beating it.
+- Ran the full search across **1h/4h/1d** on Bybit BTC/USDT ~2y → **NO edge** (DSR never near
+  0.95; all rejected). Cost-frequency is the killer (Sharpe rises as freq falls); lower TF trades
+  sample for cost (1–21 trades). Buy & hold also lost (−3.6..−4.3%). Logged in
+  `docs/research/strategy_search_findings.md`. Conclusion: a real edge needs a *different
+  information source*, not more tuning — go-live stays correctly blocked. Suite **504→508**.
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
