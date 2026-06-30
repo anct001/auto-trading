@@ -20,6 +20,7 @@ from pathlib import Path
 
 import ccxt
 
+from backtest.benchmark import buy_and_hold
 from backtest.hypothesis import validate_hypothesis
 from backtest.runner import Costs
 from src.core.console import force_utf8_stdio
@@ -58,6 +59,10 @@ def main(argv=None) -> int:
     df = quality.check_quality(df).clean.reset_index(drop=True)
     print(f"== {args.pair} {args.timeframe} from {args.exchange}: {len(df)} clean candles ==")
     costs = Costs.load(ROOT / "config" / "backtest" / "costs.json")
+    bh = buy_and_hold(df, costs=costs)
+    print(f"-- baseline buy & hold: total_return {bh['total_return'] * 100:+.1f}%  "
+          f"sharpe {bh['sharpe']:.3f}  maxDD {bh['max_drawdown'] * 100:.1f}%  "
+          f"(an edge must BEAT this) --")
     journal = HypothesisJournal(Path(tempfile.gettempdir()) / "strategy_search_journal.jsonl")
     open(journal.path, "w").close()  # fresh journal for this search
     n = len(df)
@@ -78,7 +83,9 @@ def main(argv=None) -> int:
               f"{o['dsr']:>8.3f}  {rec.status.upper()}")
 
     print(f"\nN trials counted (§5 denominator): {journal.count_trials()}")
-    print("VERDICT: " + ("a VALIDATED edge found — review before any capital (§14)" if any_edge
+    print(f"buy & hold over the same window: {bh['total_return'] * 100:+.1f}%")
+    print("VERDICT: " + ("a VALIDATED edge found — review vs buy&hold before any capital (§14)"
+                         if any_edge
                          else "no validated edge — go-live correctly blocked; keep researching"))
     return 0 if any_edge else 1
 
