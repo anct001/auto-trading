@@ -134,14 +134,20 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
     if path == "/api/preview":
         if method != "POST":
             return Response(405, {"error": "use POST"})
-        return Response(200, ctx.preview(body or {}))
+        try:
+            return Response(200, ctx.preview(body or {}))
+        except (ValueError, TypeError) as e:
+            return Response(400, {"error": f"invalid request body: {e}"})
 
     if path == "/api/order":
         if method != "POST":
             return Response(405, {"error": "use POST"})
         if ctx.place is None:
             return Response(404, {"error": "manual order placing not enabled"})
-        return Response(200, ctx.place(body or {}))
+        try:
+            return Response(200, ctx.place(body or {}))
+        except (ValueError, TypeError) as e:
+            return Response(400, {"error": f"invalid request body: {e}"})
 
     if path == "/api/killswitch/engage":
         if method != "POST":

@@ -45,6 +45,23 @@ def test_rearm_without_operator_is_400():
     assert r.status == 400 and "error" in r.body
 
 
+def test_malformed_write_body_is_400_not_a_crash():
+    # the live _place/_preview wrappers do float(body["qty"]) — a non-numeric value raises
+    # ValueError. The router must turn that into a clean 400, not let the exception escape and
+    # leak a traceback / 500 to the operator (the manual-order path is risk-gated, but a bad
+    # *request* should fail gracefully). Mirrors the real provider behavior.
+    ks = KillSwitch()
+    bad = OperatorContext(
+        dashboard=lambda: {},
+        preview=lambda body: {"ok": float(body["qty"])},
+        killswitch=ks,
+        place=lambda body: {"ok": float(body["qty"])},
+    )
+    for path in ("/api/preview", "/api/order"):
+        r = handle_request("POST", path, {"side": "buy", "qty": "abc"}, bad)
+        assert r.status == 400 and "error" in r.body, path
+
+
 def test_unknown_path_is_404():
     assert handle_request("GET", "/api/nope", None, _ctx()).status == 404
 

@@ -473,6 +473,27 @@ edge** (−22%/2.5y). Instead, added the legitimate path + pro-quant gaps:
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
+### 2026-06-30 (session) — invariant re-audit of all order paths + router robustness fix
+Fresh-container resume; re-installed deps, baseline **519 passed**, ruff clean. Since the last
+13-finding audit several write surfaces were added (manual order, UI flatten, kill-switch via
+HTTP), so re-proved **Inv 3/9 ("one execution path, no backdoor")** by tracing every path that can
+reach the exchange:
+- **Bot loop** (`fast_loop._enter/_exit`), **manual order** (`DryRunner.place_manual`), and **UI
+  flatten** (`POST /api/order` side:sell → `place_manual`) all route `engine.validate` →
+  `broker.submit`. Broker still refuses any non-engine-minted `Approval` (`is_engine_approved`).
+- **Preview** (`ui/preview`, `/api/preview`) runs the exact `validate` with **no** submit.
+- **Protective stop** (`stops.attach`) is a **reduceOnly sell** (risk-reducing) — correctly outside
+  the entry gate; fails closed on a non-positive stop price.
+- **Kill-switch** `re_arm` requires an operator identity; engage overrides everything.
+  → **Core invariants intact.** No backdoor; runtime controls remain tighten-only.
+- **One defect found & fixed (test-first):** the live `_place`/`_preview` wrappers do
+  `float(body["qty"])` *before* `place_manual`'s own try/except, so a malformed write body (e.g.
+  `{"qty":"abc"}`) raised `ValueError` that escaped `handle_request` (no try/except in `_dispatch`)
+  → traceback/500 to the operator instead of a clean 400. Not an invariant breach (no order placed,
+  no server crash — `ThreadingHTTPServer` isolates the request), but a robustness/contract gap.
+  Fixed in the router: `/api/preview` and `/api/order` now catch `(ValueError, TypeError)` → **400**
+  `invalid request body`. Test `test_malformed_write_body_is_400_not_a_crash`. Suite **519→520**.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.
