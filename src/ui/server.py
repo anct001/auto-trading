@@ -833,12 +833,12 @@ def replay_html() -> str:
  button{padding:7px 12px;background:#2c4a6b;color:#fff;border:0;border-radius:6px;cursor:pointer}
  .kpi{font-size:12px;color:#8b93a1} .kpi b{color:#d7dbe0;font-size:15px}
 </style></head><body>
-<h1>Multi-pair replay comparison <a href="/">· dashboard</a> <a href="/markets">· markets</a> <a href="/chat">· assistant</a></h1>
+<h1><span id="hdr">Replay comparison</span> <a href="/">· dashboard</a> <a href="/markets">· markets</a> <a href="/chat">· assistant</a></h1>
 <div class="banner">Read-only. Replay P&amp;L is optimistic (§2) and the dumb strategies have no validated edge —
  use it to compare pipeline behaviour across coins, not as an edge claim. The assistant explains this data; it cannot trade.</div>
 <h2>Comparison (click a column to sort, a row to inspect)</h2>
 <table id="tbl"><thead><tr>
- <th data-k="pair">Pair</th><th data-k="trades">Trades</th><th data-k="win_rate">Win%</th>
+ <th data-k="pair" id="th0">Pair</th><th data-k="trades">Trades</th><th data-k="win_rate">Win%</th>
  <th data-k="profit_factor">PF</th><th data-k="total_return">Return</th><th data-k="max_drawdown">MaxDD</th>
  <th data-k="calmar">Calmar</th><th data-k="sharpe">Sharpe</th><th data-k="sortino">Sortino</th>
  <th data-k="var95">VaR95</th><th data-k="cvar95">CVaR95</th>
@@ -863,7 +863,11 @@ const cls=(x)=>x>=0?"ok":"bad";
 const pfcls=(x)=>(x==null||x>=1)?"ok":"bad";            // profit factor: >=1 (or ∞) good
 // loss metric (negative; deeper = worse): amber past warn, red past bad
 const loss=(x,warn,bad)=>x==null?"":(x<=bad?"bad":(x<=warn?"warn":""));
-async function load(){DATA=await (await fetch("/api/replay")).json();renderTable();
+async function load(){DATA=await (await fetch("/api/replay")).json();
+ document.getElementById("th0").textContent=DATA.label||"Pair";
+ if(DATA.dimension==="strategy"&&DATA.coin){document.getElementById("hdr").textContent=
+   "Strategy comparison on "+DATA.coin;}
+ renderTable();
  if((DATA.table||[]).length){select((DATA.best_pair)||DATA.table[0].pair);} }
 function renderTable(){const rows=[...(DATA.table||[])].sort((a,b)=>{const v=(a[SORT.k]>b[SORT.k]?1:-1)*SORT.dir;return v;});
  document.querySelector("#tbl tbody").innerHTML=rows.map(r=>`<tr data-p="${r.pair}" class="${r.pair===SEL?'sel':''}">

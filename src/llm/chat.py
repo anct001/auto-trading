@@ -182,11 +182,15 @@ def build_multi_pair_summary(snapshot: dict) -> str:
     for the prompt, so the assistant can analyse and look up across coins. Whitelisted fields only."""
     if not snapshot or not snapshot.get("table"):
         return "(no multi-pair replay data available)"
+    is_strat = snapshot.get("dimension") == "strategy"
+    what = "strategies" if is_strat else "pairs"
+    header = (f"Multi-strategy replay comparison on {snapshot.get('coin')}"
+              if is_strat else "Multi-pair replay comparison")
     lines = [
-        f"Multi-pair replay comparison (start equity {snapshot.get('start_equity')}).",
-        f"Available pairs: {', '.join(snapshot.get('pairs', []))}",
+        f"{header} (start equity {snapshot.get('start_equity')}).",
+        f"Available {what}: {', '.join(snapshot.get('pairs', []))}",
         f"Best by return: {snapshot.get('best_pair')} · worst: {snapshot.get('worst_pair')}",
-        "Per pair (sorted by total return):",
+        f"Per {what[:-1] if what.endswith('s') else what} (sorted by total return):",
     ]
     for row in snapshot["table"]:
         pf = row.get("profit_factor")

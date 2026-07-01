@@ -115,11 +115,14 @@ def summarize_result(pair: str, *, trades: list[dict], equity_history: list[dict
     )
 
 
-def build_replay_comparison(results: dict[str, ReplayResult]) -> dict:
-    """A JSON-safe comparison across pairs: a sortable metric table + best/worst + per-pair detail.
+def build_replay_comparison(results: dict[str, ReplayResult], *, dimension: str = "pair",
+                            coin: str | None = None) -> dict:
+    """A JSON-safe comparison of replay runs: a sortable metric table + best/worst + per-run detail.
 
-    Rows are sorted by total return (desc). ``profit_factor`` stays None (=∞, JSON-safe) when a
-    pair had wins and no losses — the UI renders None as ∞."""
+    ``dimension`` = what the rows vary: ``"pair"`` (one strategy across coins) or ``"strategy"``
+    (many strategies on one ``coin``). It only affects labelling — the row key stays ``pair``
+    (reused by the UI/detail lookup). Rows are sorted by total return (desc). ``profit_factor``
+    stays None (=∞, JSON-safe) when a run had wins and no losses — the UI renders None as ∞."""
     rows = []
     for r in results.values():
         perf = r.performance
@@ -145,7 +148,10 @@ def build_replay_comparison(results: dict[str, ReplayResult]) -> dict:
     rows.sort(key=lambda x: x["total_return"], reverse=True)
     start_equity = next(iter(results.values())).start_equity if results else 0.0
     return {
-        "pairs": [r["pair"] for r in rows],
+        "dimension": dimension,                       # "pair" | "strategy"
+        "label": "Strategy" if dimension == "strategy" else "Pair",
+        "coin": coin,                                 # the coin, when comparing strategies
+        "pairs": [r["pair"] for r in rows],           # row identifiers (pairs or strategy names)
         "table": rows,
         "best_pair": rows[0]["pair"] if rows else None,
         "worst_pair": rows[-1]["pair"] if rows else None,

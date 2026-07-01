@@ -100,6 +100,16 @@ python -m src.dry_run --data-exchange kucoin --pairs "BTC/USDT,ETH/USDT,SOL/USDT
 # + trades, and a read-only AI assistant scoped to ALL pairs.
 ```
 
+**Strategy comparison on ONE coin** — pit EMA / RSI / Donchian / Funding against each other:
+
+```bash
+python -m src.dry_run --data-exchange kucoin --pair BTC/USDT \
+    --strategies "ema,rsi,donchian,funding" --replay-days 60 --serve-ui
+# /replay now compares strategies (rows = strategy) on that coin, same metric columns; the
+# assistant answers "which strategy did best and why?". Runs via the §8 backtest engine;
+# FundingCarry gets a causally-aligned funding column (needs a perp; default <pair>:USDT, or --perp).
+```
+
 Uses the coin's **real** OHLCV (from `--data-exchange`, or a stored `.parquet`/`.csv`). Prints
 ticks / closed trades / final equity / return and writes the event log. It is a smoke of the
 *pipeline*, not an edge claim — dry-run fills are optimistic (§2) and the EMA-cross has no edge; for

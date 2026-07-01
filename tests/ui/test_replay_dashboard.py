@@ -79,6 +79,27 @@ def test_comparison_sorts_by_return_and_flags_best_worst():
     assert set(comp["detail"]) == {"BTC/USDT", "ETH/USDT", "SOL/USDT"}
 
 
+def test_comparison_strategy_dimension_labels_rows_by_strategy():
+    results = {
+        "ema_12_26": summarize_result("ema_12_26", trades=[{"return": 0.02, "pnl": 200.0}],
+                                      equity_history=_eq(10000, 10200), start_equity=10000.0),
+        "rsi_14": summarize_result("rsi_14", trades=[{"return": -0.01, "pnl": -100.0}],
+                                   equity_history=_eq(10000, 9900), start_equity=10000.0),
+    }
+    comp = build_replay_comparison(results, dimension="strategy", coin="BTC/USDT")
+    assert comp["dimension"] == "strategy" and comp["label"] == "Strategy"
+    assert comp["coin"] == "BTC/USDT"
+    assert comp["best_pair"] == "ema_12_26"           # row key holds the strategy name
+    assert [r["pair"] for r in comp["table"]] == ["ema_12_26", "rsi_14"]
+
+
+def test_comparison_default_dimension_is_pair():
+    comp = build_replay_comparison({
+        "BTC/USDT": summarize_result("BTC/USDT", trades=[], equity_history=_eq(10000, 10100),
+                                     start_equity=10000.0)})
+    assert comp["dimension"] == "pair" and comp["label"] == "Pair" and comp["coin"] is None
+
+
 def test_comparison_is_json_safe_infinite_profit_factor_stays_none():
     import json
     r = ReplayResult(

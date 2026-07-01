@@ -445,6 +445,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--pairs", default=None,
                    help="comma-separated pairs for a MULTI-PAIR replay comparison (needs "
                         "--replay-days); serves the /replay dashboard + cross-coin assistant.")
+    p.add_argument("--strategies", default=None,
+                   help="comma-separated strategies (ema,rsi,donchian,funding) to compare on ONE "
+                        "--pair over --replay-days; serves the /replay dashboard + assistant.")
+    p.add_argument("--perp", default=None,
+                   help="perp symbol for funding (default <pair>:USDT) when comparing the funding strategy")
     p.add_argument("--poll-seconds", type=float, default=60.0)
     p.add_argument("--events", default="events/dry_run.jsonl")
     p.add_argument("--sentiment-state", default=None,
@@ -498,6 +503,29 @@ def main(argv: list[str] | None = None) -> None:
         print(f"[dry-run] operator dashboard (read-only) on http://127.0.0.1:{args.ui_port}/ "
               f"(assistant at /chat, model {args.chat_model}; "
               f"writes {'TOKEN-PROTECTED' if ui_token else 'open — localhost only'})")
+
+    if args.strategies:
+        strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
+        days = args.replay_days if args.replay_days > 0 else 365
+        print(f"[dry-run] STRATEGY COMPARISON on {args.pair} over {days}d: {', '.join(strategies)}")
+        comparison = run_strategy_comparison(
+            data_ex=data_ex, coin=args.pair, strategies=strategies, timeframe=args.timeframe,
+            days=days, equity=args.equity, cfg=cfg, costs=costs, market=market, perp=args.perp)
+        print(f"[dry-run] STRATEGY COMPARISON done. Best: {comparison.get('best_pair')} · "
+              f"worst: {comparison.get('worst_pair')}")
+        if args.serve_ui:
+            import threading
+
+            from src.ui.live import build_replay_context
+            from src.ui.server import serve
+            rctx = build_replay_context(comparison, chat_model=args.chat_model)
+            threading.Thread(target=serve, args=(rctx,), kwargs={"port": args.ui_port},
+                             daemon=True).start()
+            print(f"[dry-run] strategy-comparison dashboard on "
+                  f"http://127.0.0.1:{args.ui_port}/replay")
+            while True:
+                time.sleep(3600)
+        return
 
     if args.pairs:
         from src.strategy.ema_cross import EmaCross
@@ -586,6 +614,90 @@ def run_multi_replay(*, data_ex, pairs: list[str], timeframe: str, days: int, eq
         except Exception as e:  # noqa: BLE001 — one bad symbol must not sink the batch
             print(f"[multi-replay] {pair}: ERROR {type(e).__name__}: {e} (skipped)")
     return results
+
+
+def _summarize_backtest(name: str, df, result, start_equity: float):
+    """Adapt a BacktestResult (trades DF + equity Series) into a ReplayResult, computing per-bar
+    exposure (position value / equity) from the trade spans + the coin's closes."""
+    from src.ui.replay_dashboard import summarize_result
+    eqc = result.equity_curve
+    closes = dict(zip(df["timestamp"], df["close"]))
+    tdf = result.trades
+    exposure = {ts: 0.0 for ts in eqc.index}
+    for _, tr in tdf.iterrows():
+        et, xt, q = tr["entry_time"], tr["exit_time"], float(tr["qty"])
+        for ts in eqc.index:
+            if et <= ts < xt:
+                eq = float(eqc.loc[ts])
+                exposure[ts] = (q * float(closes.get(ts, 0.0)) / eq) if eq > 0 else 0.0
+    equity_history = [{"t": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+                       "equity": float(eqc.loc[ts]), "exposure": exposure[ts]} for ts in eqc.index]
+    trades = [{"exit_time": tr["exit_time"].isoformat() if hasattr(tr["exit_time"], "isoformat")
+               else str(tr["exit_time"]), "return": float(tr["return"]),
+               "pnl": (float(tr["exit_price"]) - float(tr["entry_price"])) * float(tr["qty"])}
+              for _, tr in tdf.iterrows()]
+    return summarize_result(name, trades=trades, equity_history=equity_history,
+                            start_equity=start_equity)
+
+
+# strategy registry for the comparison: cli-name -> (label, factory, needs_funding)
+def _strategy_registry():
+    from src.strategy.donchian_breakout import DonchianBreakout
+    from src.strategy.ema_cross import EmaCross
+    from src.strategy.funding_carry import FundingCarry
+    from src.strategy.rsi_reversion import RsiReversion
+    return {
+        "ema": ("ema_12_26", lambda: EmaCross(12, 26), False),
+        "rsi": ("rsi_14", lambda: RsiReversion(14, 30, 70), False),
+        "donchian": ("donchian_20", lambda: DonchianBreakout(20), False),
+        "funding": ("funding_carry", lambda: FundingCarry(0.0), True),
+    }
+
+
+def run_strategy_comparison(*, data_ex, coin: str, strategies: list[str], timeframe: str,
+                            days: int, equity: float, cfg: RiskConfig, costs: Costs,
+                            market: MarketConstraints, perp: str | None = None,
+                            atr_period: int = 14, atr_stop_mult: float = 2.0) -> dict:
+    """Compare several strategies on ONE coin via the §8 backtest engine, return a comparison dict.
+
+    All strategies run on the same fetched history (uniform, honest); FundingCarry additionally gets
+    a causally-aligned funding column. Returns build_replay_comparison(..., dimension="strategy")."""
+    from backtest.runner import RiskSizing, run_backtest
+    from src.data import quality
+    from src.ui.replay_dashboard import build_replay_comparison
+    registry = _strategy_registry()
+    specs = [(registry[s][0], registry[s][1], registry[s][2]) for s in strategies if s in registry]
+
+    now = data_ex.milliseconds()
+    since = now - days * 86_400_000
+    df = feed.fetch_ohlcv_history(data_ex, coin, timeframe, since_ms=since, page_limit=720, now_ms=now)
+    df = quality.check_quality(df).clean.reset_index(drop=True)
+    print(f"[strategy-cmp] {coin} {timeframe}: {len(df)} clean candles")
+
+    df_funding = df
+    if any(nf for _, _, nf in specs):
+        from src.data import funding as funding_mod
+        try:
+            perp_sym = perp or f"{coin}:USDT"
+            fdf = funding_mod.fetch_funding_history(data_ex, perp_sym, since_ms=since, now_ms=now)
+            df_funding = funding_mod.align_funding(df, fdf)
+            print(f"[strategy-cmp] funding: {len(fdf)} prints for {perp_sym}")
+        except Exception as e:  # noqa: BLE001
+            print(f"[strategy-cmp] funding fetch failed ({e}); dropping funding strategy")
+            specs = [(n, f, nf) for (n, f, nf) in specs if not nf]
+
+    risk = RiskSizing(cfg=cfg, market=market, atr_period=atr_period, atr_stop_mult=atr_stop_mult)
+    results: dict = {}
+    for name, factory, needs_funding in specs:
+        try:
+            use_df = df_funding if needs_funding else df
+            res = run_backtest(use_df, factory(), costs=costs, risk=risk, initial_equity=equity)
+            results[name] = _summarize_backtest(name, use_df, res, equity)
+            print(f"[strategy-cmp] {name}: {len(res.trades)} trades, "
+                  f"return {results[name].total_return * 100:+.2f}%")
+        except Exception as e:  # noqa: BLE001 — one bad strategy must not sink the batch
+            print(f"[strategy-cmp] {name}: ERROR {type(e).__name__}: {e} (skipped)")
+    return build_replay_comparison(results, dimension="strategy", coin=coin)
 
 
 def _load_replay_history(args, data_ex):

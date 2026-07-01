@@ -665,6 +665,22 @@ Enriched the multi-pair comparison table + cross-coin chat with pro-desk metrics
   HTTP (new keys in `/api/replay`, new headers + colour helpers on the page). Suite **579→580**,
   ruff clean.
 
+### 2026-06-30 (session, cont.) — strategy comparison on one coin (EMA/RSI/Donchian/Funding)
+Reused the /replay comparison surface to compare *strategies* on a single coin (not just coins):
+- `build_replay_comparison(..., dimension="strategy", coin=...)` — same table/model, rows now keyed
+  by strategy name; adds `dimension`/`label`/`coin`. Default stays `dimension="pair"` (backward
+  compatible). Chat multi-pair summary is dimension-aware ("Multi-strategy comparison on <coin>").
+- `dry_run.run_strategy_comparison` — runs each strategy on the SAME fetched history via the §8
+  **backtest engine** (uniform + honest; FundingCarry gets a causally-aligned funding column);
+  `_summarize_backtest` adapts BacktestResult→ReplayResult incl. per-bar exposure from trade spans.
+  Registry: ema/rsi/donchian/funding. CLI `--strategies a,b,c` (+ `--perp`) on one `--pair`.
+- `/replay` relabels the first column (Pair→Strategy) and shows the coin; served via
+  `build_replay_context`. +4 tests (strategy dimension model + default). 
+- **Verified on REAL data:** kucoin BTC/USDT 60d, all four — funding_carry −1.48% (best), ema
+  −3.67%, rsi −5.61%, donchian −7.23% (worst); kucoin served 100 funding prints. All negative =
+  honest (no edge). HTTP smoke: /replay shows dimension=strategy, coin, rows by strategy. Suite
+  **580→582**, ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.
