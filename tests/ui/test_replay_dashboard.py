@@ -53,6 +53,16 @@ def test_summarize_computes_calmar_var_cvar_and_exposure():
     assert 0.0 < r.avg_exposure < 0.8
 
 
+def test_sortino_and_mc_drawdown_are_computed_and_deterministic():
+    eqh = _eq(100, 105, 98, 103, 96, 110, 108, 115)
+    r1 = summarize_result("X", trades=[], equity_history=eqh, start_equity=100.0)
+    r2 = summarize_result("X", trades=[], equity_history=eqh, start_equity=100.0)
+    assert r1.sortino != 0.0                          # a downside exists → defined, non-zero
+    assert r1.mc_dd_p99 <= r1.mc_dd_p95 <= 0.0        # p99 is the deeper (worse) tail
+    # bootstrap is seeded → reproducible (§8)
+    assert (r1.sortino, r1.mc_dd_p95, r1.mc_dd_p99) == (r2.sortino, r2.mc_dd_p95, r2.mc_dd_p99)
+
+
 def test_comparison_sorts_by_return_and_flags_best_worst():
     results = {
         "BTC/USDT": summarize_result("BTC/USDT", trades=[{"return": 0.1, "pnl": 1000.0}],
@@ -73,14 +83,15 @@ def test_comparison_is_json_safe_infinite_profit_factor_stays_none():
     import json
     r = ReplayResult(
         pair="Z", start_equity=10000.0, final_equity=10500.0, total_return=0.05,
-        max_drawdown=-0.01, sharpe=0.5, calmar=5.0, var95=-0.02, cvar95=-0.03,
-        avg_exposure=0.4, time_in_market=0.6,
+        max_drawdown=-0.01, sharpe=0.5, sortino=0.7, calmar=5.0, var95=-0.02, cvar95=-0.03,
+        mc_dd_p95=-0.05, mc_dd_p99=-0.08, avg_exposure=0.4, time_in_market=0.6,
         performance={"trade_count": 1, "profit_factor": None, "win_rate": 1.0, "total_pnl": 500.0})
     comp = build_replay_comparison({"Z": r})
     json.dumps(comp)  # must not raise (None, not float('inf'))
     row = comp["table"][0]
     assert row["profit_factor"] is None
     assert row["calmar"] == 5.0 and row["var95"] == -0.02 and row["avg_exposure"] == 0.4
+    assert row["sortino"] == 0.7 and row["mc_dd_p95"] == -0.05 and row["mc_dd_p99"] == -0.08
 
 
 def test_comparison_empty_is_safe():

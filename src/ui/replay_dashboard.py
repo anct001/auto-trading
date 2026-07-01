@@ -14,8 +14,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
-from backtest.risk_analytics import conditional_var, value_at_risk
+from backtest.risk_analytics import bootstrap_max_drawdown, conditional_var, value_at_risk
 from src.ui.performance import performance_summary
+
+_MC_PATHS = 500  # bootstrap paths for the Monte-Carlo drawdown distribution (seeded → reproducible)
 
 
 @dataclass(frozen=True)
@@ -26,9 +28,12 @@ class ReplayResult:
     total_return: float           # final/start - 1
     max_drawdown: float           # peak-to-trough on the equity curve (<= 0)
     sharpe: float                 # per-tick mean/std of equity returns (comparable across pairs)
+    sortino: float                # per-tick mean / downside deviation (target 0)
     calmar: float                 # total_return / |max_drawdown| (period Calmar; 0 if no DD)
     var95: float                  # 95% historical VaR of per-tick returns (<= 0 = tail loss)
     cvar95: float                 # 95% CVaR / expected shortfall (mean of the tail; <= VaR)
+    mc_dd_p95: float              # Monte-Carlo bootstrapped max-drawdown, 95%-worst case (<= 0)
+    mc_dd_p99: float              # Monte-Carlo bootstrapped max-drawdown, 99%-worst case (<= 0)
     avg_exposure: float           # mean gross-position-value / equity over the run
     time_in_market: float         # fraction of ticks holding a position
     performance: dict             # ui.performance.performance_summary(trades)
@@ -68,6 +73,17 @@ def _tick_returns(equity: list[float]) -> list[float]:
             for i in range(1, len(equity)) if equity[i - 1] > 0]
 
 
+def _per_tick_sortino(rets: list[float]) -> float:
+    """Mean return / downside deviation (target 0). 0.0 if too few returns or no downside."""
+    n = len(rets)
+    if n < 2:
+        return 0.0
+    mean = sum(rets) / n
+    downside = sum(r * r for r in rets if r < 0) / n
+    dd = downside ** 0.5
+    return (mean / dd) if dd > 0 else 0.0
+
+
 def summarize_result(pair: str, *, trades: list[dict], equity_history: list[dict],
                      start_equity: float) -> ReplayResult:
     """Build a ReplayResult from one pair's replay output (trades + marked equity curve)."""
@@ -76,6 +92,7 @@ def summarize_result(pair: str, *, trades: list[dict], equity_history: list[dict
     total_return = (final / start_equity - 1.0) if start_equity else 0.0
     max_dd = _max_drawdown(equity)
     rets = _tick_returns(equity)
+    mc = bootstrap_max_drawdown(rets, n=_MC_PATHS, seed=0) if len(rets) >= 2 else {"p95": 0.0, "p99": 0.0}
     exposures = [float(e.get("exposure", 0.0)) for e in (equity_history or [])]
     return ReplayResult(
         pair=pair,
@@ -84,9 +101,12 @@ def summarize_result(pair: str, *, trades: list[dict], equity_history: list[dict
         total_return=total_return,
         max_drawdown=max_dd,
         sharpe=_per_tick_sharpe(equity),
+        sortino=_per_tick_sortino(rets),
         calmar=(total_return / abs(max_dd)) if max_dd < 0 else 0.0,
         var95=value_at_risk(rets, level=0.95) if rets else 0.0,
         cvar95=conditional_var(rets, level=0.95) if rets else 0.0,
+        mc_dd_p95=mc["p95"],
+        mc_dd_p99=mc["p99"],
         avg_exposure=(sum(exposures) / len(exposures)) if exposures else 0.0,
         time_in_market=(sum(1 for x in exposures if x > 1e-9) / len(exposures)) if exposures else 0.0,
         performance=performance_summary(trades),
@@ -112,8 +132,11 @@ def build_replay_comparison(results: dict[str, ReplayResult]) -> dict:
             "max_drawdown": r.max_drawdown,
             "calmar": r.calmar,
             "sharpe": r.sharpe,
+            "sortino": r.sortino,
             "var95": r.var95,
             "cvar95": r.cvar95,
+            "mc_dd_p95": r.mc_dd_p95,
+            "mc_dd_p99": r.mc_dd_p99,
             "avg_exposure": r.avg_exposure,
             "time_in_market": r.time_in_market,
             "final_equity": r.final_equity,

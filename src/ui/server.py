@@ -822,7 +822,7 @@ def replay_html() -> str:
  .banner{background:#12202c;border:1px solid #24425a;color:#9fc7e6;padding:6px 10px;border-radius:6px;margin-bottom:12px;font-size:12px}
  table{border-collapse:collapse;width:100%} th,td{text-align:right;padding:5px 10px;border-bottom:1px solid #232833;white-space:nowrap}
  th:first-child,td:first-child{text-align:left} th{color:#8b93a1;font-size:11px;text-transform:uppercase;cursor:pointer}
- tr.sel{background:#16202b} tbody tr{cursor:pointer} .ok{color:#46d17f} .bad{color:#f06a6a}
+ tr.sel{background:#16202b} tbody tr{cursor:pointer} .ok{color:#46d17f} .bad{color:#f06a6a} .warn{color:#e6a23c}
  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px}
  .card{background:#12151b;border:1px solid #1f2530;border-radius:8px;padding:10px}
  .chip{font-size:12px;padding:4px 8px;background:#161a20;border:1px solid #232833;color:#9fb4d6;border-radius:12px;cursor:pointer;margin:2px}
@@ -840,8 +840,10 @@ def replay_html() -> str:
 <table id="tbl"><thead><tr>
  <th data-k="pair">Pair</th><th data-k="trades">Trades</th><th data-k="win_rate">Win%</th>
  <th data-k="profit_factor">PF</th><th data-k="total_return">Return</th><th data-k="max_drawdown">MaxDD</th>
- <th data-k="calmar">Calmar</th><th data-k="sharpe">Sharpe</th><th data-k="var95">VaR95</th>
- <th data-k="cvar95">CVaR95</th><th data-k="avg_exposure">Exp%</th><th data-k="time_in_market">TiM%</th>
+ <th data-k="calmar">Calmar</th><th data-k="sharpe">Sharpe</th><th data-k="sortino">Sortino</th>
+ <th data-k="var95">VaR95</th><th data-k="cvar95">CVaR95</th>
+ <th data-k="mc_dd_p95">DD95</th><th data-k="mc_dd_p99">DD99</th>
+ <th data-k="avg_exposure">Exp%</th><th data-k="time_in_market">TiM%</th>
  <th data-k="final_equity">Final eq</th></tr></thead><tbody></tbody></table>
 
 <div class="grid">
@@ -858,17 +860,25 @@ def replay_html() -> str:
 let DATA=null, SORT={k:"total_return",dir:-1}, SEL=null, hist=[];
 const pct=(x)=>(x==null?"—":((x*100).toFixed(2)+"%")), pf=(x)=>x==null?"∞":(typeof x==="number"?x.toFixed(2):"—");
 const cls=(x)=>x>=0?"ok":"bad";
+const pfcls=(x)=>(x==null||x>=1)?"ok":"bad";            // profit factor: >=1 (or ∞) good
+// loss metric (negative; deeper = worse): amber past warn, red past bad
+const loss=(x,warn,bad)=>x==null?"":(x<=bad?"bad":(x<=warn?"warn":""));
 async function load(){DATA=await (await fetch("/api/replay")).json();renderTable();
  if((DATA.table||[]).length){select((DATA.best_pair)||DATA.table[0].pair);} }
 function renderTable(){const rows=[...(DATA.table||[])].sort((a,b)=>{const v=(a[SORT.k]>b[SORT.k]?1:-1)*SORT.dir;return v;});
  document.querySelector("#tbl tbody").innerHTML=rows.map(r=>`<tr data-p="${r.pair}" class="${r.pair===SEL?'sel':''}">
-  <td>${r.pair}</td><td>${r.trades}</td><td>${(r.win_rate*100).toFixed(0)}</td><td>${pf(r.profit_factor)}</td>
-  <td class="${cls(r.total_return)}">${pct(r.total_return)}</td><td class="bad">${pct(r.max_drawdown)}</td>
+  <td>${r.pair}</td><td>${r.trades}</td><td>${(r.win_rate*100).toFixed(0)}</td>
+  <td class="${pfcls(r.profit_factor)}">${pf(r.profit_factor)}</td>
+  <td class="${cls(r.total_return)}">${pct(r.total_return)}</td>
+  <td class="${loss(r.max_drawdown,-0.05,-0.10)}">${pct(r.max_drawdown)}</td>
   <td class="${cls(r.calmar)}">${(r.calmar||0).toFixed(2)}</td><td class="${cls(r.sharpe)}">${(r.sharpe||0).toFixed(3)}</td>
-  <td class="bad">${pct(r.var95)}</td><td class="bad">${pct(r.cvar95)}</td>
-  <td>${((r.avg_exposure||0)*100).toFixed(0)}</td><td>${((r.time_in_market||0)*100).toFixed(0)}</td>
+  <td class="${cls(r.sortino)}">${(r.sortino||0).toFixed(3)}</td>
+  <td class="${loss(r.var95,-0.01,-0.03)}">${pct(r.var95)}</td><td class="${loss(r.cvar95,-0.01,-0.03)}">${pct(r.cvar95)}</td>
+  <td class="${loss(r.mc_dd_p95,-0.10,-0.20)}">${pct(r.mc_dd_p95)}</td><td class="${loss(r.mc_dd_p99,-0.10,-0.20)}">${pct(r.mc_dd_p99)}</td>
+  <td class="${(r.avg_exposure>0.9)?'warn':''}">${((r.avg_exposure||0)*100).toFixed(0)}</td>
+  <td>${((r.time_in_market||0)*100).toFixed(0)}</td>
   <td>${(r.final_equity||0).toFixed(0)}</td></tr>`).join("")
-  ||'<tr><td colspan=13 class=kpi>no replay data — run: python -m src.dry_run --replay-days N --pairs A,B,C</td></tr>';
+  ||'<tr><td colspan=15 class=kpi>no replay data — run: python -m src.dry_run --replay-days N --pairs A,B,C</td></tr>';
  document.querySelectorAll("#tbl tbody tr").forEach(tr=>tr.onclick=()=>tr.dataset.p&&select(tr.dataset.p));}
 document.querySelectorAll("#tbl thead th").forEach(th=>th.onclick=()=>{const k=th.dataset.k;
  SORT=(SORT.k===k)?{k,dir:-SORT.dir}:{k,dir:-1};renderTable();});

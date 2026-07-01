@@ -655,6 +655,16 @@ Enriched the multi-pair comparison table + cross-coin chat with pro-desk metrics
   VaR95 −0.167%, CVaR95 −0.214%, exposure 8% / time-in-market 43%); CVaR ≤ VaR as expected. Suite
   **578→579**, ruff clean.
 
+### 2026-06-30 (session, cont.) — replay metrics: Sortino + Monte-Carlo DD + threshold colouring
+- `ReplayResult` adds **Sortino** (per-tick mean / downside deviation) and **Monte-Carlo drawdown
+  p95/p99** (`bootstrap_max_drawdown`, seeded n=500 → reproducible). Both in the `/replay` table,
+  the chat multi-pair summary, and JSON.
+- `/replay` table now **threshold-coloured**: profit factor green ≥1 / red <1; max-DD, VaR95,
+  CVaR95, DD95, DD99 amber→red as the loss deepens; Calmar/Sharpe/Sortino/return green/red by sign;
+  exposure amber if >90%. +1 test (Sortino + MC-DD, incl. seeded reproducibility). Verified over
+  HTTP (new keys in `/api/replay`, new headers + colour helpers on the page). Suite **579→580**,
+  ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.
