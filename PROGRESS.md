@@ -571,6 +571,15 @@ leverage/shorting — funding is only the signal; ADR 0002: funding is research/
   integration proven (synthetic → align → FundingCarry → walk-forward → DSR, correctly rejects
   random data). Findings doc updated (a3). Suite **543→557**, ruff clean.
 
+### 2026-06-30 (session, cont.) — operator runbook (docs/RUNBOOK.md)
+Tied the existing tooling into one step-by-step for the operator-only gates: env setup → paper tick
+→ signal parity (§8.9) → edge research (strategy_search + the new funding_edge_search) → ≥30-day
+dry-run with the UI (incl. the new `UI_AUTH_TOKEN`) → restart-safety (§9) → optional Ollama (P1
+ablation, P2 hypotheses, /chat) → config re-lock (§15) → go-live pre-flight (§14). Every command
+verified against the actual CLI flags; the config re-lock snippet reproduces the committed lock;
+`go_live_preflight` runs (5/5 auto, 13 manual pending → NOT READY, correct). Linked from CLAUDE.md
+and HANDOFF.md. Docs-only; suite unchanged at **557**, ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

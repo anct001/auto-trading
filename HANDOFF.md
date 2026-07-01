@@ -69,7 +69,7 @@ fails closed not crash (#5), non-positive stop rejected (#6), idempotency-on-res
   (§11), and the live fee schedule (§8.3). BTC/JPY is confirmed listed+active via ccxt.
 - **No keys are needed** for tests or the demos. Real keys → P4 only, in a git-ignored `.env`.
 
-## How to run (full detail in README "Quickstart")
+## How to run (full detail in README "Quickstart"; operator step-by-step in `docs/RUNBOOK.md`)
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
