@@ -54,6 +54,44 @@ class PaperBrokerExchange:
         }
 
 
+class ReplayFeed:
+    """Read-only OHLCV source over a FIXED historical dataset — for replaying the paper loop over
+    the past (no network). Exposes the ccxt slice the feed uses (``fetch_ohlcv`` + ``milliseconds``)
+    bounded by a movable ``_now`` so each replay step only ever sees candles that had closed by that
+    wall-time — causal, no look-ahead (§8.4). Semantics mirror a real venue: ``since=None`` returns
+    the most-recent ``limit`` rows; ``since`` given returns rows from there forward (ascending)."""
+
+    def __init__(self, rows: list[list[float]]):
+        self._rows = sorted(([int(r[0]), *(float(x) for x in r[1:6])] for r in rows),
+                            key=lambda r: r[0])
+        self._now = (self._rows[-1][0] + 1) if self._rows else 0
+
+    @classmethod
+    def from_frame(cls, df) -> "ReplayFeed":
+        rows = []
+        for _, r in df.iterrows():
+            ts = r["timestamp"]
+            ms = int(ts.value // 1_000_000) if hasattr(ts, "value") else int(ts)
+            rows.append([ms, r["open"], r["high"], r["low"], r["close"], r["volume"]])
+        return cls(rows)
+
+    def set_now(self, now_ms: int) -> None:
+        self._now = int(now_ms)
+
+    def milliseconds(self) -> int:
+        return self._now
+
+    def all_rows(self) -> list[list[float]]:
+        return [list(r) for r in self._rows]
+
+    def fetch_ohlcv(self, symbol, timeframe=None, since=None, limit=None):
+        rows = [r for r in self._rows if r[0] < self._now]
+        if since is not None:
+            rows = [r for r in rows if r[0] >= int(since)]
+            return [list(r) for r in (rows[:limit] if limit else rows)]
+        return [list(r) for r in (rows[-limit:] if limit else rows)]
+
+
 @dataclass
 class PaperAccount:
     """Tracks paper equity/positions and updates from fills. quote_price defaults to a pegged 1.0;
@@ -326,6 +364,33 @@ class DryRunner:
                 break
             time.sleep(poll_seconds)
 
+    def replay(self, *, warmup: int | None = None, progress_every: int = 0) -> dict:
+        """Replay the fast loop over PAST data (``data_exchange`` must be a :class:`ReplayFeed`).
+
+        Steps a synthetic 'now' forward one timeframe at a time so each tick sees exactly the
+        candles closed by that step — the *same* path as a live run (loop → risk → broker → stops →
+        event log), but over history and without sleeping. A bad bar is caught and skipped (matches
+        ``run``'s resilience), so the whole replay always completes. Returns the final health dict.
+        """
+        rows = self.data_exchange.all_rows()
+        if not rows:
+            return self.health()
+        step = feed.timeframe_to_ms(self.timeframe)
+        warm = self._buffer_cap if warmup is None else warmup
+        warm = min(max(warm, 0), len(rows))
+        total = len(rows)
+        for idx in range(warm, total):
+            t = int(rows[idx][0]) + step  # wall-clock just after this candle closes
+            self.data_exchange.set_now(t)
+            try:
+                self.run_once(now_ms=t)
+            except Exception as e:  # noqa: BLE001 — a bad bar must not stop the replay (see run())
+                self._last_error = f"{type(e).__name__}: {e}"
+            self._check_alerts()
+            if progress_every and (idx - warm) % progress_every == 0:
+                print(f"[replay] {idx}/{total}  equity={self.account.equity(self.marks()):.2f}")
+        return self.health()
+
 
 def build_runner(*, data_exchange, paper_exchange, events: EventLog, strategy, cfg: RiskConfig,
                  costs: Costs, market: MarketConstraints, account: PaperAccount, pair: str,
@@ -363,6 +428,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--timeframe", default="1h")
     p.add_argument("--equity", type=float, default=10000.0, help="starting paper equity")
     p.add_argument("--iterations", type=int, default=1, help="ticks to run (0 = forever)")
+    p.add_argument("--replay-days", type=int, default=0,
+                   help="replay N days of PAST data through the paper loop, then stop "
+                        "(0 = normal live-poll mode). No sleeping; same order path as live.")
     p.add_argument("--poll-seconds", type=float, default=60.0)
     p.add_argument("--events", default="events/dry_run.jsonl")
     p.add_argument("--sentiment-state", default=None,
@@ -416,6 +484,28 @@ def main(argv: list[str] | None = None) -> None:
         print(f"[dry-run] operator dashboard (read-only) on http://127.0.0.1:{args.ui_port}/ "
               f"(assistant at /chat, model {args.chat_model}; "
               f"writes {'TOKEN-PROTECTED' if ui_token else 'open — localhost only'})")
+
+    if args.replay_days > 0:
+        now = data_ex.milliseconds()
+        since = now - args.replay_days * 86_400_000
+        print(f"[dry-run] REPLAY: fetching {args.replay_days}d of {args.pair} {args.timeframe} "
+              f"history from {args.data_exchange} ...")
+        hist = feed.fetch_ohlcv_history(data_ex, args.pair, args.timeframe,
+                                        since_ms=since, page_limit=720, now_ms=now)
+        print(f"[dry-run] REPLAY: {len(hist)} candles — stepping the paper loop over the past "
+              f"(no real capital) ...")
+        runner.data_exchange = ReplayFeed.from_frame(hist)
+        h = runner.replay(progress_every=max(1, len(hist) // 10))
+        eq = runner.account.equity(runner.marks())
+        ret = (eq / args.equity - 1.0) * 100.0 if args.equity else 0.0
+        print(f"[dry-run] REPLAY done: {h['tick_count']} ticks, {len(runner.trades())} closed "
+              f"trades, final equity {eq:.2f} ({ret:+.2f}% vs start), realized_pnl "
+              f"{runner.account.realized_pnl:.2f}. Events -> {args.events}")
+        if args.serve_ui:
+            print("[dry-run] UI still serving the replay result — Ctrl-C to exit.")
+            while True:
+                time.sleep(3600)
+        return
 
     runner.run(iterations=None if args.iterations == 0 else args.iterations,
                poll_seconds=args.poll_seconds)

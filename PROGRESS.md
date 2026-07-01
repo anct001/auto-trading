@@ -580,6 +580,20 @@ verified against the actual CLI flags; the config re-lock snippet reproduces the
 `go_live_preflight` runs (5/5 auto, 13 manual pending → NOT READY, correct). Linked from CLAUDE.md
 and HANDOFF.md. Docs-only; suite unchanged at **557**, ruff clean.
 
+### 2026-06-30 (session, cont.) — dry-run REPLAY mode (paper loop over past data)
+Added a way to run the paper dry-run over **historical** data (not just the live poll): 
+- `ReplayFeed` (src/dry_run.py) — read-only OHLCV over a fixed dataset, bounded by a movable `_now`;
+  mirrors venue semantics (since=None → most-recent `limit`; since given → from there forward). No
+  network. `from_frame` builds it from a fetched history frame.
+- `DryRunner.replay()` — steps a synthetic clock one timeframe at a time, calling `run_once(now_ms=t)`
+  so each tick sees only candles closed by t (causal, no look-ahead §8.4). Same path as live
+  (loop → risk → broker → protective stop → event log); a bad bar is caught+skipped like `run()`.
+- CLI `--replay-days N`: fetch N days from `--data-exchange`, replay through the paper loop, print
+  ticks/trades/final-equity/return, write the event log; `--serve-ui` keeps the dashboard up after.
+- +4 tests (ReplayFeed semantics, from_frame, end-to-end trades, **causality: first-K result
+  independent of future bars**). Offline e2e demo ran 150 ticks over synthetic history. RUNBOOK
+  §4b documents it as a same-day smoke before the ≥30-day forward run. Suite **557→561**, ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

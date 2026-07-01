@@ -70,6 +70,23 @@ Read the printed table honestly: a green `VALIDATED` line is the first real edge
 conclusion. If nothing validates, that is the correct, expected result — do **not** lower the DSR
 bar or curve-fit to force a pass (§5 punishes exactly that).
 
+## 4b. Fast historical replay (dry-run over the past — a same-day smoke)
+
+Before committing to the ≥30-day *forward* run (step 5), replay the paper loop over **past** data to
+shake out the whole path (loop → risk → broker → protective stop → event log) in seconds. It uses
+the exact live order path, just stepping a synthetic clock over history — causal (each tick sees
+only candles closed by that step), no sleeping, no real capital.
+
+```bash
+python -m src.dry_run --data-exchange bybit --pair BTC/USDT --timeframe 1h \
+    --replay-days 365 --equity 10000
+# add --serve-ui to browse the result on the dashboard afterwards (Ctrl-C to exit)
+```
+
+Prints ticks / closed trades / final equity / return and writes the event log. This is a smoke of
+the *pipeline*, not an edge claim — dry-run fills are optimistic (§2), and the EMA-cross has no edge.
+For a statistically honest read use the backtest + DSR tooling (step 4), not replay P&L.
+
 ## 5. The ≥30-day forward dry-run (P3 gate)
 
 Run the paper loop continuously for **≥30 days**, no crash, with the operator dashboard up:
@@ -147,6 +164,7 @@ smallest meaningful capital, spot-only, no leverage.
 |------|---------|
 | Install + verify | `pip install -e ".[dev]" && pytest -q && ruff check .` |
 | One paper tick | `python -m src.dry_run --data-exchange bitbank --pair BTC/JPY --iterations 1` |
+| Replay past data | `python -m src.dry_run --data-exchange bybit --pair BTC/USDT --replay-days 365` |
 | Signal parity | `python scripts/dryrun_parity.py --exchange bitbank --pair BTC/JPY --days 30` |
 | TA edge search | `python scripts/strategy_search.py --exchange bybit --pair BTC/USDT --days 730` |
 | Funding edge search | `python scripts/funding_edge_search.py --exchange bybit --pair BTC/USDT --perp BTC/USDT:USDT --days 730` |
