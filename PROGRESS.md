@@ -698,6 +698,22 @@ The assistant was local-Ollama-only; added **opt-in cloud providers** while keep
 - Still read-only (Inv 1) on every backend; default stays **local Ollama (data never leaves)**.
   Suite **580→587**, ruff clean.
 
+### 2026-06-30 (session, cont.) — UI provider switcher + Gemini (extensible provider registry)
+- **Gemini backend** (`GeminiChat`): Google generateContent API (`x-goog-api-key` header, roles
+  user/model, separate `system_instruction`); same stdlib+injectable-transport pattern, key masked.
+  Registered in `CHAT_PROVIDERS` + `build_chat_client`. Adding a provider = one registry entry + one
+  factory branch.
+- **`ChatRouter`** holds one pre-built backend per available provider and routes by name;
+  `build_chat_router(env, …)` includes every provider whose key is in the env (Ollama always).
+- **Switch from the UI:** `GET /api/chat/providers` lists {name, model, default}; a **dropdown on
+  `/chat` and `/replay`** lets the operator pick the AI per question (sent as `provider` in the
+  `/api/chat` body — the key never leaves the server). `OperatorContext.chat_providers`;
+  `build_live_context`/`build_replay_context` take a `chat_router`; `dry_run` builds it from env and
+  prints which providers are available.
+- +7 tests (Gemini role-map + key-in-headers-only, router list/route/unknown→default,
+  build_chat_router key-gating, providers endpoint). Live HTTP smoke: 3 providers switchable per
+  request. Read-only on every backend (Inv 1); default local Ollama. Suite **587→591**, ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

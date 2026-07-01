@@ -331,6 +331,49 @@ def test_answer_fail_soft_works_with_any_backend():
     assert out["error"] == "cloud down" and "unavailable" in out["answer"]
 
 
+def test_gemini_backend_maps_roles_and_returns_text():
+    sent = {}
+
+    def transport(url, payload):
+        sent["url"] = url
+        sent["payload"] = payload
+        return '{"candidates":[{"content":{"parts":[{"text":"we hold BTC"}]}}]}'
+
+    client = chat.GeminiChat(api_key="AIza-SECRET", transport=transport)
+    out = client.answer("why?", _snapshot(),
+                        history=[{"role": "assistant", "content": "prior"}])
+    assert out == "we hold BTC"
+    assert ":generateContent" in sent["url"]
+    # Gemini uses role "model" for the assistant turn, and a separate system_instruction
+    roles = [c["role"] for c in sent["payload"]["contents"]]
+    assert "model" in roles and roles[-1] == "user"
+    assert "system_instruction" in sent["payload"]
+    assert "SECRET" not in json.dumps(sent["payload"])   # key stays in headers only
+
+
+def test_chat_router_lists_providers_and_routes_by_name():
+    a = chat.OllamaChat(model="llama3.1", transport=lambda u, p: '{"message":{"content":"local"}}')
+    b = chat.OpenAIChat(api_key="k", model="gpt-4o-mini",
+                        transport=lambda u, p: '{"choices":[{"message":{"content":"cloud"}}]}')
+    router = chat.ChatRouter({"ollama": a, "openai": b}, default="ollama")
+    prov = router.providers()
+    assert prov["default"] == "ollama"
+    assert {p["name"] for p in prov["providers"]} == {"ollama", "openai"}
+    assert router.answer("hi", _snapshot())["answer"] == "local"                     # default
+    assert router.answer("hi", _snapshot(), provider="openai")["answer"] == "cloud"  # switched
+    assert router.answer("hi", _snapshot(), provider="nope")["answer"] == "local"    # unknown->default
+
+
+def test_build_chat_router_includes_cloud_only_when_key_present():
+    r1 = chat.build_chat_router(env={}, default_provider="anthropic")  # no keys
+    assert [p["name"] for p in r1.providers()["providers"]] == ["ollama"]
+    assert r1.default == "ollama"                       # requested anthropic unavailable -> ollama
+    r2 = chat.build_chat_router(env={"ANTHROPIC_API_KEY": "k", "GEMINI_API_KEY": "g"},
+                                default_provider="gemini")
+    names = {p["name"] for p in r2.providers()["providers"]}
+    assert names == {"ollama", "anthropic", "gemini"} and r2.default == "gemini"
+
+
 def test_chat_module_imports_nothing_from_the_order_path():
     """Inv 1/3 by construction: the chat module must not import risk/execution/broker/engine —
     so there is provably no code path from a chat reply to an order."""

@@ -401,6 +401,61 @@ class OpenAIChat:
         return parse_openai_response(self._transport(self.url, payload))
 
 
+def parse_gemini_response(raw: str) -> str:
+    """Extract assistant text from a Google Gemini generateContent reply (or raise ValueError)."""
+    try:
+        body = json.loads(raw)
+    except (json.JSONDecodeError, TypeError) as e:
+        raise ValueError(f"malformed gemini response: {e}") from e
+    if isinstance(body, dict):
+        if body.get("error"):
+            raise ValueError(f"gemini error: {(body.get('error') or {}).get('message')}")
+        cands = body.get("candidates")
+        if isinstance(cands, list) and cands:
+            parts = ((cands[0].get("content") or {}).get("parts")
+                     if isinstance(cands[0], dict) else None)
+            if isinstance(parts, list):
+                texts = [p.get("text", "") for p in parts if isinstance(p, dict)]
+                if any(t.strip() for t in texts):
+                    return "".join(texts).strip()
+    raise ValueError("no text content in gemini response")
+
+
+class GeminiChat:
+    """Read-only operator chat via Google's Gemini generateContent API. CLOUD provider — OPT-IN.
+
+    Sends the dashboard snapshot to Google (data leaves the machine). Key held as a masked `Secret`,
+    used only for the `x-goog-api-key` header. Read-only, off the trading path (Inv 1/2). Gemini
+    uses roles user/model (assistant→model) and a separate ``system_instruction``."""
+
+    def __init__(self, *, api_key, model: str = "gemini-1.5-flash",
+                 host: str = "https://generativelanguage.googleapis.com", max_tokens: int = 1024,
+                 temperature: float = 0.2, transport: ChatTransport | None = None):
+        from src.core.secrets import Secret
+        self._key = api_key if isinstance(api_key, Secret) else Secret(str(api_key))
+        self.model = model
+        self.url = f"{host.rstrip('/')}/v1beta/models/{model}:generateContent"
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self._transport = transport or self._post
+
+    def _post(self, url: str, payload: dict) -> str:
+        return _http_post_headers(url, payload, {"x-goog-api-key": self._key.reveal()})
+
+    def answer(self, question: str, snapshot: dict, history: object = None, *,
+               context_builder=build_context_summary) -> str:
+        system, turns = _split_system(
+            build_messages(question, snapshot, history, context_builder=context_builder))
+        contents = [{"role": "model" if t["role"] == "assistant" else "user",
+                     "parts": [{"text": t["content"]}]} for t in turns]
+        payload = {
+            "system_instruction": {"parts": [{"text": system}]},
+            "contents": contents,
+            "generationConfig": {"maxOutputTokens": self.max_tokens, "temperature": self.temperature},
+        }
+        return parse_gemini_response(self._transport(self.url, payload))
+
+
 def build_chat_client(provider: str = "ollama", *, model: str | None = None, api_key=None,
                       host: str | None = None, base_url: str | None = None,
                       transport: ChatTransport | None = None):
@@ -424,7 +479,74 @@ def build_chat_client(provider: str = "ollama", *, model: str | None = None, api
         return OpenAIChat(api_key=api_key, model=model or "gpt-4o-mini",
                           base_url=base_url or host or "https://api.openai.com/v1",
                           transport=transport)
-    raise ValueError(f"unknown chat provider: {provider!r} (use ollama, anthropic, or openai)")
+    if p in ("gemini", "google"):
+        if not api_key:
+            raise ValueError("gemini provider requires an API key (set GEMINI_API_KEY)")
+        return GeminiChat(api_key=api_key, model=model or "gemini-1.5-flash",
+                          host=host or "https://generativelanguage.googleapis.com",
+                          transport=transport)
+    raise ValueError(f"unknown chat provider: {provider!r} "
+                     "(use ollama, anthropic, openai, or gemini)")
+
+
+# provider registry: name -> (env var for the API key, is-local). Extend this to add a provider.
+CHAT_PROVIDERS = {
+    "ollama": (None, True),
+    "anthropic": ("ANTHROPIC_API_KEY", False),
+    "openai": ("OPENAI_API_KEY", False),
+    "gemini": ("GEMINI_API_KEY", False),
+}
+
+
+class ChatRouter:
+    """Holds one read-only backend per available provider and routes a request to the chosen one.
+
+    The API keys are baked into the pre-built clients (never re-sent by the UI); the browser only
+    picks a provider *name*. Every backend is read-only (Inv 1)."""
+
+    def __init__(self, clients: dict, default: str):
+        if not clients:
+            raise ValueError("ChatRouter needs at least one client")
+        self._clients = clients
+        self.default = default if default in clients else next(iter(clients))
+
+    def providers(self) -> dict:
+        """UI payload: the available providers, their models, and which is the default."""
+        return {
+            "default": self.default,
+            "providers": [{"name": n, "model": getattr(c, "model", "?"),
+                           "default": n == self.default} for n, c in self._clients.items()],
+        }
+
+    def client_for(self, name: str | None):
+        return self._clients.get(name or self.default) or self._clients[self.default]
+
+    def answer(self, question: str, snapshot: dict, *, provider: str | None = None,
+               history: object = None, context_builder=build_context_summary) -> dict:
+        return answer(question, snapshot, client=self.client_for(provider), history=history,
+                      context_builder=context_builder)
+
+
+def build_chat_router(*, env=None, default_provider: str = "ollama",
+                      ollama_model: str = "llama3.1", ollama_host: str = _DEFAULT_HOST,
+                      base_url: str | None = None) -> ChatRouter:
+    """Build a ChatRouter with every provider whose API key is present in ``env`` (ollama always).
+
+    Local Ollama is always included (data never leaves). A cloud provider is added only if its key
+    env var is set; the key is loaded as a masked Secret. Adding a new provider is one entry in
+    ``CHAT_PROVIDERS`` plus a ``build_chat_client`` branch."""
+    import os
+
+    from src.core.secrets import load_optional
+    env = os.environ if env is None else env
+    clients: dict = {"ollama": OllamaChat(model=ollama_model, host=ollama_host)}
+    for name, (env_var, is_local) in CHAT_PROVIDERS.items():
+        if is_local or env_var is None:
+            continue
+        key = load_optional(env_var, env=env)
+        if key is not None:
+            clients[name] = build_chat_client(name, api_key=key, base_url=base_url)
+    return ChatRouter(clients, default_provider)
 
 
 def answer(question: str, snapshot: dict, *, client, history: object = None,

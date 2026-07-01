@@ -38,7 +38,8 @@ class OperatorContext:
     orderbook: Callable[[str], dict] | None = None  # pair -> order-book depth view
     agentview: Callable[[str], dict] | None = None  # pair -> agent-view overlay (signal/regime/sentiment)
     trades_tape: Callable[[str], dict] | None = None  # pair -> recent public market trades (tape)
-    chat: Callable[[dict], dict] | None = None  # body{question} -> {answer,error} READ-ONLY (Inv 1); None = disabled
+    chat: Callable[[dict], dict] | None = None  # body{question,provider?} -> {answer,error} READ-ONLY (Inv 1)
+    chat_providers: Callable[[], dict] | None = None  # () -> {default, providers:[{name,model,default}]}
     replay: Callable[[], dict] | None = None  # () -> multi-pair replay comparison model; None = no replay view
     auth_token: str | None = None  # if set, mutating writes require a matching X-Auth-Token; None = open (localhost)
 
@@ -196,6 +197,12 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
         return Response(200, chat_html(), content_type="text/html; charset=utf-8")
+
+    if path == "/api/chat/providers":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, ctx.chat_providers() if ctx.chat_providers
+                        else {"default": "ollama", "providers": []})
 
     if path == "/api/chat":
         # POST carries the operator's question, but the assistant is strictly READ-ONLY (Inv 1):
@@ -771,11 +778,18 @@ def chat_html() -> str:
  limits, or touch the kill-switch. All trading is deterministic and risk-gated.</div>
 <div id="chips"></div>
 <div id="log"></div>
-<div id="bar"><button id="clear" type="button">Clear chat</button><span id="status" class="muted"></span></div>
+<div id="bar"><button id="clear" type="button">Clear chat</button>
+ <label class="muted" style="font-size:12px">AI: <select id="prov" style="background:#161a20;color:#d7dbe0;border:1px solid #232833;border-radius:5px;padding:3px"></select></label>
+ <span id="status" class="muted"></span></div>
 <form id="f"><input id="q" placeholder="Ask about equity, positions, why we're flat, the last rejection…" autocomplete="off">
  <button id="send">Ask</button></form>
 <script>
 const log=document.getElementById("log"),q=document.getElementById("q"),send=document.getElementById("send");
+const prov=document.getElementById("prov");
+async function loadProviders(){try{const d=await (await fetch("/api/chat/providers")).json();
+ const ps=d.providers||[];prov.innerHTML=ps.map(p=>`<option value="${p.name}"${p.name===d.default?" selected":""}>${p.name} (${p.model})</option>`).join("");
+ if(ps.length<=1)prov.parentElement.style.display="none";}catch(e){prov.parentElement.style.display="none";}}
+loadProviders();
 const SUGGEST=["What's my equity and P&L today?","Why are we flat right now?","What's my drawdown vs the kill-switch?",
  "Summarize my recent closed trades.","Explain the last risk rejection.","Is the bot healthy?"];
 let hist=[];  // [{role, content}] prior turns, sent for multi-turn context (bounded server-side)
@@ -791,7 +805,7 @@ function renderCites(wrap,cites){if(!cites||!cites.length)return;
 async function ask(text){text=(text||"").trim();if(!text)return;add("you","you",text);
  q.value="";send.disabled=true;const wrap=add("bot","assistant","…");const body=wrap.lastChild;
  try{const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
-   body:JSON.stringify({question:text,history:hist})});const j=await r.json();
+   body:JSON.stringify({question:text,history:hist,provider:prov.value||undefined})});const j=await r.json();
   const ans=j.answer||j.error||"(no answer)";body.textContent=ans;renderCites(wrap,j.citations);
   hist.push({role:"user",content:text});hist.push({role:"assistant",content:ans});
   if(hist.length>12)hist=hist.slice(-12);
@@ -851,7 +865,7 @@ def replay_html() -> str:
   <svg id="eq" width="100%" height="130" viewBox="0 0 400 130" preserveAspectRatio="none"></svg>
   <h2>Trades</h2><table id="trades"><thead><tr><th>Exit</th><th>Return</th><th>P&amp;L</th></tr></thead><tbody></tbody></table>
  </div>
- <div class="card"><h2>Assistant — analyse across coins</h2>
+ <div class="card"><h2>Assistant — analyse across coins <label class="kpi" style="float:right">AI: <select id="prov" style="background:#161a20;color:#d7dbe0;border:1px solid #232833;border-radius:5px;padding:2px"></select></label></h2>
   <div id="chips"></div><div id="chatlog"></div>
   <form id="cf" style="display:flex;gap:6px"><input id="q" placeholder="e.g. which coin did best and why? compare BTC vs ETH"><button>Ask</button></form>
  </div>
@@ -903,13 +917,17 @@ function add(c,m,t){const w=document.createElement("div");w.className="msg "+c;c
  h.style.cssText="font-size:11px;color:#8b93a1";h.textContent=m;const b=document.createElement("div");b.textContent=t;
  w.appendChild(h);w.appendChild(b);document.getElementById("chatlog").appendChild(w);w.scrollIntoView();return b;}
 async function ask(text){text=(text||"").trim();if(!text)return;add("you","you",text);const q=document.getElementById("q");q.value="";
- const b=add("bot","assistant","…");try{const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
-  body:JSON.stringify({question:text,history:hist})});const j=await r.json();const a=j.answer||j.error||"(no answer)";b.textContent=a;
+ const b=add("bot","assistant","…");try{const pv=document.getElementById("prov");
+  const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({question:text,history:hist,provider:(pv&&pv.value)||undefined})});const j=await r.json();const a=j.answer||j.error||"(no answer)";b.textContent=a;
   hist.push({role:"user",content:text});hist.push({role:"assistant",content:a});if(hist.length>12)hist=hist.slice(-12);}
  catch(e){b.textContent="error: "+e;}}
 ["Which coin did best and why?","Compare the top two pairs.","Which coin had the worst drawdown?","Summarize the whole comparison."]
  .forEach(s=>{const c=document.createElement("span");c.className="chip";c.textContent=s;c.onclick=()=>ask(s);document.getElementById("chips").appendChild(c);});
 document.getElementById("cf").addEventListener("submit",e=>{e.preventDefault();ask(document.getElementById("q").value);});
+(async()=>{try{const d=await (await fetch("/api/chat/providers")).json();const pv=document.getElementById("prov");
+ const ps=d.providers||[];pv.innerHTML=ps.map(p=>`<option value="${p.name}"${p.name===d.default?" selected":""}>${p.name}</option>`).join("");
+ if(ps.length<=1)pv.parentElement.style.display="none";}catch(e){document.getElementById("prov").parentElement.style.display="none";}})();
 load();
 </script></body></html>"""
 

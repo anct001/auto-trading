@@ -21,24 +21,38 @@ from src.ui.api import dashboard_payload, preview_payload
 from src.ui.server import OperatorContext
 
 
+def _chat_router(chat_router, provider, model, host, api_key, base_url):
+    """Return the given ChatRouter, or build a single-provider one from the provider kwargs.
+
+    Local ``ollama`` uses ``host``; cloud providers use their own default host. Passing a
+    ``chat_router`` (built by ``llm.chat.build_chat_router`` from env keys) enables UI provider
+    switching across every provider whose key is configured."""
+    from src.llm.chat import ChatRouter, build_chat_client
+    if chat_router is not None:
+        return chat_router
+    _host = host if provider == "ollama" else None
+    client = build_chat_client(provider, model=model, api_key=api_key, host=_host, base_url=base_url)
+    return ChatRouter({provider: client}, provider)
+
+
 def build_replay_context(
-    comparison: dict, *, chat_model: str = "llama3.1", chat_host: str = "http://localhost:11434",
-    chat_provider: str = "ollama", chat_api_key=None, chat_base_url: str | None = None,
+    comparison: dict, *, chat_router=None, chat_model: str = "llama3.1",
+    chat_host: str = "http://localhost:11434", chat_provider: str = "ollama", chat_api_key=None,
+    chat_base_url: str | None = None,
 ) -> OperatorContext:
     """An OperatorContext serving a completed MULTI-PAIR replay comparison + a read-only assistant
     scoped to it (analyse/look up across coins). No live loop, no writes — a static, read-only view
-    of finished replay results (Inv 1/2). ``chat_provider`` selects the backend (local ``ollama``
-    default; ``anthropic``/``openai`` are opt-in cloud and send state off-machine)."""
-    from src.llm.chat import build_chat_client, build_multi_pair_summary
-    from src.llm.chat import answer as _chat_answer
-
-    _host = chat_host if chat_provider == "ollama" else None  # cloud uses its own default host
-    client = build_chat_client(chat_provider, model=chat_model, api_key=chat_api_key,
-                               host=_host, base_url=chat_base_url)
+    of finished replay results (Inv 1/2). ``chat_router`` (or the provider kwargs) selects the
+    backend; local ``ollama`` is default, cloud providers are opt-in and send state off-machine.
+    The UI can switch among whichever providers the router holds."""
+    from src.llm.chat import build_multi_pair_summary
+    router = _chat_router(chat_router, chat_provider, chat_model, chat_host, chat_api_key,
+                          chat_base_url)
 
     def _chat(body: dict) -> dict:
-        return _chat_answer(str(body.get("question", "")), comparison, client=client,
-                            history=body.get("history"), context_builder=build_multi_pair_summary)
+        return router.answer(str(body.get("question", "")), comparison,
+                             provider=body.get("provider"), history=body.get("history"),
+                             context_builder=build_multi_pair_summary)
 
     return OperatorContext(
         dashboard=lambda: {"replay": True, "pairs": comparison.get("pairs", [])},
@@ -46,6 +60,7 @@ def build_replay_context(
         killswitch=KillSwitch(),
         replay=lambda: comparison,
         chat=_chat,
+        chat_providers=router.providers,
     )
 
 # the exchange-state the dry-run asserts (mirrors dry_run._GOOD_EXCHANGE for the preview ctx)
@@ -54,9 +69,9 @@ _GOOD_EXCHANGE = {"spot_mode": True, "leverage": 1, "margin_disabled": True,
 
 
 def build_live_context(
-    runner, *, chat_model: str = "llama3.1", chat_host: str = "http://localhost:11434",
-    chat_provider: str = "ollama", chat_api_key=None, chat_base_url: str | None = None,
-    auth_token: str | None = None,
+    runner, *, chat_router=None, chat_model: str = "llama3.1",
+    chat_host: str = "http://localhost:11434", chat_provider: str = "ollama", chat_api_key=None,
+    chat_base_url: str | None = None, auth_token: str | None = None,
 ) -> OperatorContext:
     """Build an OperatorContext backed by a live ``DryRunner`` (see module docstring).
 
@@ -67,15 +82,12 @@ def build_live_context(
     fail-soft 'unavailable' message — the dashboard and the trading loop are unaffected (Inv 2).
     ``auth_token``, when set, requires a matching X-Auth-Token header on the mutating writes (manual
     order, kill-switch) — the read surface stays open (localhost assumption)."""
-    from src.llm.chat import build_chat_client
-    from src.llm.chat import answer as _chat_answer
     from src.risk import engine
 
     cfg = runner.loop.cfg
     market = runner.loop.market
-    _host = chat_host if chat_provider == "ollama" else None  # cloud uses its own default host
-    chat_client = build_chat_client(chat_provider, model=chat_model, api_key=chat_api_key,
-                                    host=_host, base_url=chat_base_url)
+    router = _chat_router(chat_router, chat_provider, chat_model, chat_host, chat_api_key,
+                          chat_base_url)
 
     def _dashboard() -> dict:
         from src.ui.performance import performance_summary
@@ -187,11 +199,12 @@ def build_live_context(
 
     def _chat(body: dict) -> dict:
         # READ-ONLY operator assistant (Inv 1): explains the live dashboard snapshot, never acts.
-        # Off the trading path (Inv 2) — runs only on this UI thread when the operator asks.
-        return _chat_answer(str(body.get("question", "")), _dashboard(),
-                            client=chat_client, history=body.get("history"))
+        # Off the trading path (Inv 2) — runs only on this UI thread when the operator asks. The
+        # operator may switch provider per request (router routes by body["provider"]).
+        return router.answer(str(body.get("question", "")), _dashboard(),
+                             provider=body.get("provider"), history=body.get("history"))
 
     return OperatorContext(dashboard=_dashboard, preview=_preview, killswitch=runner.killswitch,
                            orders=_orders, place=_place, orderbook=_orderbook, agentview=_agentview,
                            coin=_coin, markets=_markets, trades_tape=_trades_tape, chat=_chat,
-                           auth_token=auth_token)
+                           chat_providers=router.providers, auth_token=auth_token)

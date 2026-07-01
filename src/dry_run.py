@@ -420,35 +420,26 @@ def build_runner(*, data_exchange, paper_exchange, events: EventLog, strategy, c
 
 
 def _resolve_chat_config(args) -> dict:
-    """Resolve the /chat assistant backend from CLI + env into build_*_context kwargs.
-
-    Default is local Ollama (data never leaves). For a CLOUD provider the API key comes ONLY from
-    the environment (never a flag → never in shell history / process list), wrapped as a masked
-    Secret; a clear privacy warning is printed. If the key is missing the provider falls back to
-    local Ollama so the UI still runs."""
-    import os
-
+    """Build the /chat ChatRouter from CLI + env: every provider whose API key is in the environment
+    (local Ollama always), so the UI can switch among them. Keys come ONLY from the env (never a
+    flag → never in shell history / process list), wrapped as masked Secrets. A privacy warning is
+    printed when any cloud provider is available. Returns build_*_context kwargs."""
+    from src.llm.chat import build_chat_router
     provider = getattr(args, "chat_provider", "ollama")
-    model = args.chat_model
-    if provider == "ollama":
-        return {"chat_provider": "ollama", "chat_model": model, "chat_api_key": None,
-                "chat_base_url": None}
-
-    from src.core.secrets import load_optional
-    env_name = "ANTHROPIC_API_KEY" if provider == "anthropic" else "OPENAI_API_KEY"
-    key = load_optional(env_name, env=os.environ)
-    if model == "llama3.1":  # the Ollama default → let the provider pick its own default model
-        model = None
-    if key is None:
-        print(f"[dry-run] ⚠ chat provider '{provider}' selected but {env_name} is not set — "
-              f"falling back to LOCAL ollama for /chat.")
-        return {"chat_provider": "ollama", "chat_model": args.chat_model, "chat_api_key": None,
-                "chat_base_url": None}
-    print(f"[dry-run] ⚠ /chat uses CLOUD provider '{provider}' (key from {env_name}): the "
-          f"dashboard snapshot (equity, positions, decisions) is SENT to the provider. "
-          f"Read-only — it still cannot trade (Inv 1).")
-    return {"chat_provider": provider, "chat_model": model, "chat_api_key": key,
-            "chat_base_url": args.chat_base_url}
+    router = build_chat_router(default_provider=provider, ollama_model=args.chat_model,
+                               base_url=args.chat_base_url)
+    names = [p["name"] for p in router.providers()["providers"]]
+    print(f"[dry-run] /chat providers: {', '.join(names)} (default {router.default}; "
+          "switch in the UI)")
+    if any(n != "ollama" for n in names):
+        print("[dry-run] ⚠ CLOUD chat providers send the dashboard snapshot (equity/positions/"
+              "decisions) off-machine when selected. Read-only — they still cannot trade (Inv 1).")
+    if provider != "ollama" and provider not in names:
+        env_name = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY",
+                    "gemini": "GEMINI_API_KEY"}.get(provider, "?")
+        print(f"[dry-run] ⚠ requested provider '{provider}' has no {env_name} set — "
+              f"defaulting to {router.default}.")
+    return {"chat_router": router}
 
 
 def main(argv: list[str] | None = None) -> None:

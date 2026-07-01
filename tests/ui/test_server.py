@@ -119,6 +119,21 @@ def test_replay_routes_serve_comparison_and_page():
     assert empty.status == 200 and empty.body["table"] == []
 
 
+def test_chat_providers_endpoint():
+    ctx = OperatorContext(
+        dashboard=lambda: {}, preview=lambda b: {}, killswitch=KillSwitch(),
+        chat=lambda b: {"answer": "hi"},
+        chat_providers=lambda: {"default": "ollama",
+                                "providers": [{"name": "ollama", "model": "llama3.1"},
+                                              {"name": "openai", "model": "gpt-4o-mini"}]})
+    r = handle_request("GET", "/api/chat/providers", None, ctx)
+    assert r.status == 200 and r.body["default"] == "ollama"
+    assert {p["name"] for p in r.body["providers"]} == {"ollama", "openai"}
+    # disabled -> empty list, not an error; POST is 405 (read-only)
+    assert handle_request("GET", "/api/chat/providers", None, _ctx()).body["providers"] == []
+    assert handle_request("POST", "/api/chat/providers", {}, ctx).status == 405
+
+
 def test_unknown_path_is_404():
     assert handle_request("GET", "/api/nope", None, _ctx()).status == 404
 
