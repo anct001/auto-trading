@@ -76,6 +76,36 @@ def test_chat_disabled_is_404_enabled_returns_answer():
     assert handle_request("GET", "/api/chat", None, ctx).status == 405
 
 
+def test_auth_token_gates_mutating_writes_only():
+    ks = KillSwitch()
+    ctx = OperatorContext(
+        dashboard=lambda: {"equity": 1.0}, preview=lambda b: {"allowed": True}, killswitch=ks,
+        place=lambda b: {"placed": True}, chat=lambda b: {"answer": "hi"},
+        auth_token="s3cr3t",
+    )
+    # no token -> mutating writes are 401
+    assert handle_request("POST", "/api/order", {}, ctx).status == 401
+    assert handle_request("POST", "/api/killswitch/engage", None, ctx).status == 401
+    # wrong token -> 401
+    assert handle_request("POST", "/api/order", {}, ctx, {"X-Auth-Token": "nope"}).status == 401
+    # right token -> allowed
+    assert handle_request("POST", "/api/order", {}, ctx, {"X-Auth-Token": "s3cr3t"}).status == 200
+    assert handle_request("POST", "/api/killswitch/engage", None, ctx,
+                          {"x-auth-token": "s3cr3t"}).status == 200  # header case-insensitive
+    # read endpoints + read-only POSTs stay open without a token
+    assert handle_request("GET", "/api/dashboard", None, ctx).status == 200
+    assert handle_request("POST", "/api/preview", {}, ctx).status == 200
+    assert handle_request("POST", "/api/chat", {"question": "hi"}, ctx).status == 200
+
+
+def test_no_auth_token_configured_leaves_writes_open():
+    # default (no token) is backward compatible: mutating writes need no header
+    ks = KillSwitch()
+    ctx = OperatorContext(dashboard=lambda: {}, preview=lambda b: {}, killswitch=ks,
+                          place=lambda b: {"placed": True})
+    assert handle_request("POST", "/api/order", {}, ctx).status == 200
+
+
 def test_unknown_path_is_404():
     assert handle_request("GET", "/api/nope", None, _ctx()).status == 404
 

@@ -372,6 +372,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--ui-port", type=int, default=8787)
     p.add_argument("--chat-model", default="llama3.1",
                    help="Ollama model for the read-only operator assistant (/chat); off the trading path")
+    p.add_argument("--ui-token", default=None,
+                   help="require this X-Auth-Token on UI writes (order/kill-switch); "
+                        "defaults to env UI_AUTH_TOKEN. Unset = open (localhost only)")
     p.add_argument("--alert-webhook", default=None,
                    help="POST alerts (breaker/limit/kill) to this webhook URL (Telegram/Slack/push)")
     args = p.parse_args(argv)
@@ -406,11 +409,13 @@ def main(argv: list[str] | None = None) -> None:
 
         from src.ui.live import build_live_context
         from src.ui.server import serve
-        ctx = build_live_context(runner, chat_model=args.chat_model)
+        ui_token = args.ui_token or os.environ.get("UI_AUTH_TOKEN")
+        ctx = build_live_context(runner, chat_model=args.chat_model, auth_token=ui_token)
         threading.Thread(target=serve, args=(ctx,), kwargs={"port": args.ui_port},
                          daemon=True).start()
         print(f"[dry-run] operator dashboard (read-only) on http://127.0.0.1:{args.ui_port}/ "
-              f"(assistant at /chat, model {args.chat_model})")
+              f"(assistant at /chat, model {args.chat_model}; "
+              f"writes {'TOKEN-PROTECTED' if ui_token else 'open — localhost only'})")
 
     runner.run(iterations=None if args.iterations == 0 else args.iterations,
                poll_seconds=args.poll_seconds)

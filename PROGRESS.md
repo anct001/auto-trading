@@ -541,6 +541,19 @@ Made the read-only assistant genuinely useful, still within the invariants:
   smoke OK (explain links present, `?q=` auto-ask wired, `/api/chat` returns resolved citations
   D1/D2). Suite **537→541**, ruff clean. Still strictly read-only (Inv 1).
 
+### 2026-06-30 (session, cont.) — UI write-endpoint auth token (defense-in-depth)
+The whole operator UI assumed localhost/solo-operator (no auth). Added an OPTIONAL shared-secret
+gate on the *dangerous* writes so the surface is safe if ever exposed off localhost:
+- `handle_request(..., headers=None)` + `OperatorContext.auth_token`: when a token is configured,
+  `/api/order` and `/api/killswitch/engage|rearm` require a matching `X-Auth-Token` (constant-time
+  compare) → **401** otherwise. Read endpoints (GET) and read-only POSTs (`/api/preview`,
+  `/api/chat`) stay open (they can't move money). Backward compatible: no token = unchanged.
+- Wiring: `build_live_context(..., auth_token=)`; `dry_run.py --ui-token` / env `UI_AUTH_TOKEN`;
+  startup line reports writes as TOKEN-PROTECTED or open. Browser side: a small `fetch` wrapper on
+  the four write pages attaches the token from `localStorage` on POSTs and prompts+retries on 401.
+- +2 tests; live HTTP smoke OK (order/kill-switch 401 without token, 200 with; preview/dashboard
+  open). Suite **541→543**, ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

@@ -25,14 +25,17 @@ _GOOD_EXCHANGE = {"spot_mode": True, "leverage": 1, "margin_disabled": True,
 
 
 def build_live_context(
-    runner, *, chat_model: str = "llama3.1", chat_host: str = "http://localhost:11434"
+    runner, *, chat_model: str = "llama3.1", chat_host: str = "http://localhost:11434",
+    auth_token: str | None = None,
 ) -> OperatorContext:
     """Build an OperatorContext backed by a live ``DryRunner`` (see module docstring).
 
     ``chat_model``/``chat_host`` configure the READ-ONLY operator assistant (Inv 1): it is given a
     snapshot of the (already-redacted) dashboard payload and can only explain it. If Ollama is
     down the chat endpoint returns a fail-soft 'unavailable' message — the dashboard and the
-    trading loop are unaffected (Inv 2)."""
+    trading loop are unaffected (Inv 2). ``auth_token``, when set, requires a matching
+    X-Auth-Token header on the mutating writes (manual order, kill-switch) — the read surface stays
+    open (localhost assumption)."""
     from src.llm.chat import OllamaChat
     from src.llm.chat import answer as _chat_answer
     from src.risk import engine
@@ -157,4 +160,5 @@ def build_live_context(
 
     return OperatorContext(dashboard=_dashboard, preview=_preview, killswitch=runner.killswitch,
                            orders=_orders, place=_place, orderbook=_orderbook, agentview=_agentview,
-                           coin=_coin, markets=_markets, trades_tape=_trades_tape, chat=_chat)
+                           coin=_coin, markets=_markets, trades_tape=_trades_tape, chat=_chat,
+                           auth_token=auth_token)

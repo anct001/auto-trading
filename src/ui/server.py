@@ -39,6 +39,7 @@ class OperatorContext:
     agentview: Callable[[str], dict] | None = None  # pair -> agent-view overlay (signal/regime/sentiment)
     trades_tape: Callable[[str], dict] | None = None  # pair -> recent public market trades (tape)
     chat: Callable[[dict], dict] | None = None  # body{question} -> {answer,error} READ-ONLY (Inv 1); None = disabled
+    auth_token: str | None = None  # if set, mutating writes require a matching X-Auth-Token; None = open (localhost)
 
 
 @dataclass(frozen=True)
@@ -48,11 +49,41 @@ class Response:
     content_type: str = "application/json"
 
 
-def handle_request(method: str, path: str, body: dict | None, ctx: OperatorContext) -> Response:
+# mutating write endpoints — these can place an order or halt/resume trading, so when an auth
+# token is configured they must present it. Read endpoints (GET) and the read-only POSTs
+# (/api/preview, /api/chat) stay open under the localhost assumption; the token exists to stop a
+# non-operator from reaching the *dangerous* writes if the surface is ever exposed off localhost.
+_PROTECTED_WRITES = frozenset({
+    "/api/order", "/api/killswitch/engage", "/api/killswitch/rearm",
+})
+
+
+def _auth_ok(path: str, ctx: OperatorContext, headers: dict | None) -> bool:
+    """True if the request may proceed: no token configured, or a matching X-Auth-Token present."""
+    if not ctx.auth_token or path not in _PROTECTED_WRITES:
+        return True
+    supplied = ""
+    if headers:
+        # HTTP headers are case-insensitive; check the common spellings
+        supplied = (headers.get("X-Auth-Token") or headers.get("x-auth-token") or "")
+    return _consteq(str(supplied), ctx.auth_token)
+
+
+def _consteq(a: str, b: str) -> bool:
+    """Constant-time-ish string compare (avoid leaking token length/prefix via timing)."""
+    import hmac
+    return hmac.compare_digest(a, b)
+
+
+def handle_request(method: str, path: str, body: dict | None, ctx: OperatorContext,
+                   headers: dict | None = None) -> Response:
     """Route one request. Pure: no I/O. See module docstring for the §12 contract."""
     parts = urlsplit(path)
     query = parse_qs(parts.query)
     path = parts.path.rstrip("/") or "/"
+
+    if not _auth_ok(path, ctx, headers):
+        return Response(401, {"error": "missing or invalid auth token"})
 
     if path == "/":
         if method != "GET":
@@ -235,6 +266,7 @@ def index_html() -> str:
 <button onclick="rearm()">Re-arm</button> <button onclick="toggleTheme()">Theme</button>
 <span id="msg" class="muted"></span></div>
 <script>
+window.fetch=((of)=>async(u,o)=>{o=o||{};if((o.method||"GET").toUpperCase()==="POST"){o.headers=Object.assign({},o.headers,{"X-Auth-Token":localStorage.getItem("uitoken")||""});}let r=await of(u,o);if(r.status===401){const t=prompt("Operator auth token for writes:");if(t){localStorage.setItem("uitoken",t);o.headers=Object.assign({},o.headers,{"X-Auth-Token":t});r=await of(u,o);}}return r;})(window.fetch);
 const COL={ok:"#46d17f",warn:"#e6a23c",bad:"#f06a6a"};
 const fmt=(n)=>typeof n==="number"?n.toLocaleString(undefined,{maximumFractionDigits:4}):n;
 function cls(v,soft,hard){if(v<=hard)return"bad";if(v<=soft)return"warn";return"ok";}
@@ -342,6 +374,7 @@ def terminal_html() -> str:
  <div class="tile" data-tid="agent" style="grid-column:span 3"><div class="t">⠿ Agent view</div><div id="agent"></div><div class="t" style="margin-top:8px">Decision log</div><div id="log" style="font-size:11px"></div></div>
 </div>
 <script>
+window.fetch=((of)=>async(u,o)=>{o=o||{};if((o.method||"GET").toUpperCase()==="POST"){o.headers=Object.assign({},o.headers,{"X-Auth-Token":localStorage.getItem("uitoken")||""});}let r=await of(u,o);if(r.status===401){const t=prompt("Operator auth token for writes:");if(t){localStorage.setItem("uitoken",t);o.headers=Object.assign({},o.headers,{"X-Auth-Token":t});r=await of(u,o);}}return r;})(window.fetch);
 const NS="http://www.w3.org/2000/svg",C={ok:"#3fd07f",bad:"#f06a6a",warn:"#e6a23c"};
 let PAIR=new URLSearchParams(location.search).get("pair")||"BTC/JPY";
 document.getElementById("pair").value=PAIR;
@@ -469,6 +502,7 @@ def pro_html() -> str:
 </div>
 <script src="/static/lightweight-charts.js"></script>
 <script>
+window.fetch=((of)=>async(u,o)=>{o=o||{};if((o.method||"GET").toUpperCase()==="POST"){o.headers=Object.assign({},o.headers,{"X-Auth-Token":localStorage.getItem("uitoken")||""});}let r=await of(u,o);if(r.status===401){const t=prompt("Operator auth token for writes:");if(t){localStorage.setItem("uitoken",t);o.headers=Object.assign({},o.headers,{"X-Auth-Token":t});r=await of(u,o);}}return r;})(window.fetch);
 const NS="http://www.w3.org/2000/svg",C={ok:"#3fd07f",bad:"#f06a6a"};
 let PAIR=new URLSearchParams(location.search).get("pair")||"BTC/USDT",TF="";const TFS=["1h","4h","1d"];
 document.getElementById("pair").value=PAIR;
@@ -668,6 +702,7 @@ def orders_html() -> str:
 <h2>Submitted</h2><table id="sub"><thead><tr><th>Time</th><th>Pair</th><th>Side</th><th>Amount</th><th>Client id</th></tr></thead><tbody></tbody></table>
 <h2>Fills</h2><table id="fil"><thead><tr><th>Time</th><th>Pair</th><th>Filled</th></tr></thead><tbody></tbody></table>
 <script>
+window.fetch=((of)=>async(u,o)=>{o=o||{};if((o.method||"GET").toUpperCase()==="POST"){o.headers=Object.assign({},o.headers,{"X-Auth-Token":localStorage.getItem("uitoken")||""});}let r=await of(u,o);if(r.status===401){const t=prompt("Operator auth token for writes:");if(t){localStorage.setItem("uitoken",t);o.headers=Object.assign({},o.headers,{"X-Auth-Token":t});r=await of(u,o);}}return r;})(window.fetch);
 const fmt=(n)=>typeof n==="number"?n.toLocaleString(undefined,{maximumFractionDigits:6}):(n??"");
 function body(){return {side:document.getElementById("side").value,
  qty:parseFloat(document.getElementById("qty").value),
@@ -781,7 +816,7 @@ def serve(ctx: OperatorContext, *, host: str = "127.0.0.1", port: int = 8787) ->
                 body = json.loads(raw) if raw else None
             except json.JSONDecodeError:
                 body = None
-            resp = handle_request(method, self.path, body, ctx)
+            resp = handle_request(method, self.path, body, ctx, dict(self.headers))
             payload = resp.body if isinstance(resp.body, str) else json.dumps(resp.body)
             out = payload.encode("utf-8")
             self.send_response(resp.status)
