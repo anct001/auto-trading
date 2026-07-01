@@ -106,6 +106,19 @@ def test_no_auth_token_configured_leaves_writes_open():
     assert handle_request("POST", "/api/order", {}, ctx).status == 200
 
 
+def test_replay_routes_serve_comparison_and_page():
+    comparison = {"pairs": ["BTC/USDT"], "best_pair": "BTC/USDT", "table": [{"pair": "BTC/USDT"}]}
+    ctx = OperatorContext(dashboard=lambda: {}, preview=lambda b: {}, killswitch=KillSwitch(),
+                          replay=lambda: comparison)
+    api = handle_request("GET", "/api/replay", None, ctx)
+    assert api.status == 200 and api.body["best_pair"] == "BTC/USDT"
+    page = handle_request("GET", "/replay", None, ctx)
+    assert page.status == 200 and "text/html" in page.content_type
+    # disabled replay -> empty model, not an error
+    empty = handle_request("GET", "/api/replay", None, _ctx())
+    assert empty.status == 200 and empty.body["table"] == []
+
+
 def test_unknown_path_is_404():
     assert handle_request("GET", "/api/nope", None, _ctx()).status == 404
 

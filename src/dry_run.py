@@ -437,6 +437,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--save-history", default=None,
                    help="with --replay-days, also save the fetched REAL history to this .parquet "
                         "so it can be replayed later with --replay-file (reproducible).")
+    p.add_argument("--pairs", default=None,
+                   help="comma-separated pairs for a MULTI-PAIR replay comparison (needs "
+                        "--replay-days); serves the /replay dashboard + cross-coin assistant.")
     p.add_argument("--poll-seconds", type=float, default=60.0)
     p.add_argument("--events", default="events/dry_run.jsonl")
     p.add_argument("--sentiment-state", default=None,
@@ -491,6 +494,33 @@ def main(argv: list[str] | None = None) -> None:
               f"(assistant at /chat, model {args.chat_model}; "
               f"writes {'TOKEN-PROTECTED' if ui_token else 'open — localhost only'})")
 
+    if args.pairs:
+        from src.strategy.ema_cross import EmaCross
+        from src.ui.replay_dashboard import build_replay_comparison
+        pairs = [p.strip() for p in args.pairs.split(",") if p.strip()]
+        days = args.replay_days if args.replay_days > 0 else 365
+        print(f"[dry-run] MULTI-PAIR REPLAY over {days}d: {', '.join(pairs)}")
+        results = run_multi_replay(
+            data_ex=data_ex, pairs=pairs, timeframe=args.timeframe, days=days, equity=args.equity,
+            cfg=cfg, costs=costs, market=market, strategy_factory=lambda: EmaCross(12, 26),
+            events_dir=os.path.join(os.path.dirname(args.events) or ".", "replay"))
+        comparison = build_replay_comparison(results)
+        print(f"[dry-run] MULTI-PAIR done. Best: {comparison.get('best_pair')} · "
+              f"worst: {comparison.get('worst_pair')} ({len(results)} pairs)")
+        if args.serve_ui:
+            import threading
+
+            from src.ui.live import build_replay_context
+            from src.ui.server import serve
+            rctx = build_replay_context(comparison, chat_model=args.chat_model)
+            threading.Thread(target=serve, args=(rctx,), kwargs={"port": args.ui_port},
+                             daemon=True).start()
+            print(f"[dry-run] replay dashboard on http://127.0.0.1:{args.ui_port}/replay "
+                  f"(cross-coin assistant at /chat)")
+            while True:
+                time.sleep(3600)
+        return
+
     if args.replay_file or args.replay_days > 0:
         hist = _load_replay_history(args, data_ex)
         print(f"[dry-run] REPLAY: {len(hist)} REAL {args.pair} {args.timeframe} candles — stepping "
@@ -510,6 +540,47 @@ def main(argv: list[str] | None = None) -> None:
 
     runner.run(iterations=None if args.iterations == 0 else args.iterations,
                poll_seconds=args.poll_seconds)
+
+
+def run_multi_replay(*, data_ex, pairs: list[str], timeframe: str, days: int, equity: float,
+                     cfg: RiskConfig, costs: Costs, market: MarketConstraints, strategy_factory,
+                     events_dir: str, atr_period: int = 14, atr_stop_mult: float = 2.0) -> dict:
+    """Replay the paper loop over PAST data for each pair and return {pair: ReplayResult}.
+
+    Each pair gets its own paper account, event log, and ReplayFeed (fetched history). A pair whose
+    fetch/replay fails is skipped (logged) so one bad symbol never sinks the batch. No real capital.
+    """
+    import os
+
+    from src.ui.replay_dashboard import summarize_result
+    os.makedirs(events_dir, exist_ok=True)
+    now = data_ex.milliseconds()
+    since = now - days * 86_400_000
+    results: dict = {}
+    for pair in pairs:
+        try:
+            hist = feed.fetch_ohlcv_history(data_ex, pair, timeframe, since_ms=since,
+                                            page_limit=720, now_ms=now)
+            if hist is None or len(hist) == 0:
+                print(f"[multi-replay] {pair}: no data, skipped")
+                continue
+            safe = pair.replace("/", "_")
+            runner = build_runner(
+                data_exchange=ReplayFeed.from_frame(hist), paper_exchange=PaperBrokerExchange(),
+                events=EventLog(os.path.join(events_dir, f"{safe}.jsonl")),
+                strategy=strategy_factory(), cfg=cfg, costs=costs, market=market,
+                account=PaperAccount(cash=equity), pair=pair, timeframe=timeframe,
+                atr_period=atr_period, atr_stop_mult=atr_stop_mult)
+            runner.replay()
+            results[pair] = summarize_result(
+                pair, trades=runner.trades(), equity_history=runner.equity_history(),
+                start_equity=equity)
+            print(f"[multi-replay] {pair}: {len(hist)} candles, "
+                  f"{len(runner.trades())} trades, return "
+                  f"{results[pair].total_return * 100:+.2f}%")
+        except Exception as e:  # noqa: BLE001 — one bad symbol must not sink the batch
+            print(f"[multi-replay] {pair}: ERROR {type(e).__name__}: {e} (skipped)")
+    return results
 
 
 def _load_replay_history(args, data_ex):

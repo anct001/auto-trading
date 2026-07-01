@@ -177,13 +177,41 @@ def _sanitize_history(history: object) -> list[dict]:
     return out[-_MAX_HISTORY_TURNS:]
 
 
-def build_messages(question: str, snapshot: dict, history: object = None) -> list[dict]:
+def build_multi_pair_summary(snapshot: dict) -> str:
+    """Render a multi-pair replay/dry-run comparison (from replay_dashboard.build_replay_comparison)
+    for the prompt, so the assistant can analyse and look up across coins. Whitelisted fields only."""
+    if not snapshot or not snapshot.get("table"):
+        return "(no multi-pair replay data available)"
+    lines = [
+        f"Multi-pair replay comparison (start equity {snapshot.get('start_equity')}).",
+        f"Available pairs: {', '.join(snapshot.get('pairs', []))}",
+        f"Best by return: {snapshot.get('best_pair')} · worst: {snapshot.get('worst_pair')}",
+        "Per pair (sorted by total return):",
+    ]
+    for row in snapshot["table"]:
+        pf = row.get("profit_factor")
+        pf_s = "inf" if pf is None else (f"{pf:.2f}" if isinstance(pf, (int, float)) else "n/a")
+        wr = row.get("win_rate")
+        wr_s = f"{float(wr) * 100:.1f}%" if isinstance(wr, (int, float)) else "n/a"
+        lines.append(
+            f"  - {row.get('pair')}: return {_fmt_pct((row.get('total_return') or 0) * 100)}, "
+            f"trades {row.get('trades')}, win rate {wr_s}, profit factor {pf_s}, "
+            f"max DD {_fmt_pct((row.get('max_drawdown') or 0) * 100)}, "
+            f"sharpe {float(row.get('sharpe') or 0):.3f}, final equity {row.get('final_equity')}"
+        )
+    return "\n".join(lines)
+
+
+def build_messages(question: str, snapshot: dict, history: object = None, *,
+                   context_builder=build_context_summary) -> list[dict]:
     """Build the Ollama /api/chat message list: system + prior turns + state + question. Pure.
 
     The current state is attached only to the latest turn (freshest, not duplicated into history),
-    so follow-ups ("why?") keep conversational context without re-sending stale snapshots."""
+    so follow-ups ("why?") keep conversational context without re-sending stale snapshots.
+    ``context_builder`` renders the snapshot into the STATE block (single-pair dashboard by
+    default; pass ``build_multi_pair_summary`` for the cross-coin replay comparison)."""
     q = (question or "").strip()[:_MAX_QUESTION_CHARS]
-    user = f"CURRENT STATE:\n{build_context_summary(snapshot)}\n\nOPERATOR QUESTION: {q}"
+    user = f"CURRENT STATE:\n{context_builder(snapshot)}\n\nOPERATOR QUESTION: {q}"
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         *_sanitize_history(history),
@@ -231,17 +259,19 @@ class OllamaChat:
         self.num_predict = num_predict
         self._transport = transport or _http_post
 
-    def answer(self, question: str, snapshot: dict, history: object = None) -> str:
+    def answer(self, question: str, snapshot: dict, history: object = None, *,
+               context_builder=build_context_summary) -> str:
         payload = {
             "model": self.model,
-            "messages": build_messages(question, snapshot, history),
+            "messages": build_messages(question, snapshot, history, context_builder=context_builder),
             "stream": False,
             "options": {"temperature": self.temperature, "num_predict": self.num_predict},
         }
         return parse_chat_response(self._transport(self.url, payload))
 
 
-def answer(question: str, snapshot: dict, *, client: OllamaChat, history: object = None) -> dict:
+def answer(question: str, snapshot: dict, *, client: OllamaChat, history: object = None,
+           context_builder=build_context_summary) -> dict:
     """Fail-soft entry point for the UI: returns ``{"answer", "error"}``. Never raises.
 
     A blank question is refused without calling the model. ``history`` (prior {role, content}
@@ -252,7 +282,7 @@ def answer(question: str, snapshot: dict, *, client: OllamaChat, history: object
     if not q:
         return {"answer": "", "error": "empty question", "citations": []}
     try:
-        text = client.answer(q, snapshot, history)
+        text = client.answer(q, snapshot, history, context_builder=context_builder)
         return {"answer": text, "error": None, "citations": extract_citations(text, snapshot)}
     except Exception as e:  # noqa: BLE001 — fail-soft: a chat error must never reach the UI/loop
         return {"answer": f"(assistant unavailable: {e})", "error": str(e), "citations": []}

@@ -623,6 +623,26 @@ entry futilely rejected as `per_asset_cap`). TDD, money code, invariant-safe:
   now **9 closed trades, 18 RiskPassed, 0 rejections** (was 0 trades / 9 `per_asset_cap` rejects);
   realized_pnl ~breakeven (EMA-cross has no edge — honest). Suite **562→568**, ruff clean.
 
+### 2026-06-30 (session, cont.) — multi-pair replay dashboard + cross-coin AI assistant
+Built a visual dry-run/replay comparison across selectable coins, with the read-only assistant
+scoped to all of them:
+- `ui/replay_dashboard.py` — pure model: `summarize_result` (per pair: return, max-DD, per-tick
+  Sharpe from the equity curve + `performance_summary` trade stats) and `build_replay_comparison`
+  (JSON-safe sortable table + best/worst + per-pair detail). +6 tests.
+- `llm/chat.py` — `build_multi_pair_summary` (renders the comparison for the LLM) + an injectable
+  `context_builder` threaded through `build_messages`/`OllamaChat.answer`/`answer` (default =
+  single-pair dashboard, unchanged). The assistant can now analyse/look up ACROSS coins. +3 tests.
+- `ui/server.py` — `OperatorContext.replay`, `GET /api/replay` + a `/replay` page (sortable metric
+  table, pair selector with equity mini-chart + trades, cross-coin chat box, suggestion chips), nav
+  link. +1 test. `ui/live.py` `build_replay_context` wires a finished comparison + the multi-pair
+  chat (read-only, no live loop).
+- `dry_run.py` — `run_multi_replay` (a DryRunner.replay per pair, own account/log/feed; a bad
+  symbol is skipped) + `--pairs A,B,C`; `--serve-ui` serves `/replay`.
+- **Verified on REAL data:** kucoin BTC/ETH/SOL 30d → BTC −0.69%, ETH −0.51%, SOL +1.77% (best SOL,
+  worst BTC); HTTP smoke: `/api/replay` sorted, `/replay` renders, cross-coin chat gets the whole
+  table in context and answers "SOL did best". Suite **568→578**, ruff clean. Read-only throughout
+  (Inv 1); still an optimistic-fill pipeline view (§2), not an edge claim.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

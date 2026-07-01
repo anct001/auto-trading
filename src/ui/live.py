@@ -16,8 +16,33 @@ mid-update between fill steps); it self-corrects on the next poll and never affe
 """
 from __future__ import annotations
 
+from src.risk.killswitch import KillSwitch
 from src.ui.api import dashboard_payload, preview_payload
 from src.ui.server import OperatorContext
+
+
+def build_replay_context(
+    comparison: dict, *, chat_model: str = "llama3.1", chat_host: str = "http://localhost:11434",
+) -> OperatorContext:
+    """An OperatorContext serving a completed MULTI-PAIR replay comparison + a read-only assistant
+    scoped to it (analyse/look up across coins). No live loop, no writes — a static, read-only view
+    of finished replay results (Inv 1/2)."""
+    from src.llm.chat import OllamaChat, build_multi_pair_summary
+    from src.llm.chat import answer as _chat_answer
+
+    client = OllamaChat(model=chat_model, host=chat_host)
+
+    def _chat(body: dict) -> dict:
+        return _chat_answer(str(body.get("question", "")), comparison, client=client,
+                            history=body.get("history"), context_builder=build_multi_pair_summary)
+
+    return OperatorContext(
+        dashboard=lambda: {"replay": True, "pairs": comparison.get("pairs", [])},
+        preview=lambda body: {"allowed": False, "reasons": ["replay view is read-only"]},
+        killswitch=KillSwitch(),
+        replay=lambda: comparison,
+        chat=_chat,
+    )
 
 # the exchange-state the dry-run asserts (mirrors dry_run._GOOD_EXCHANGE for the preview ctx)
 _GOOD_EXCHANGE = {"spot_mode": True, "leverage": 1, "margin_disabled": True,

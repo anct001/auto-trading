@@ -229,6 +229,46 @@ def test_answer_refuses_empty_question_without_calling_model():
     assert called["n"] == 0  # the model is never consulted for an empty question
 
 
+def _comparison():
+    return {
+        "pairs": ["BTC/USDT", "ETH/USDT"], "best_pair": "BTC/USDT", "worst_pair": "ETH/USDT",
+        "start_equity": 10000.0,
+        "table": [
+            {"pair": "BTC/USDT", "trades": 5, "win_rate": 0.6, "profit_factor": 1.8,
+             "total_return": 0.10, "max_drawdown": -0.04, "sharpe": 0.05, "final_equity": 11000.0},
+            {"pair": "ETH/USDT", "trades": 3, "win_rate": 0.33, "profit_factor": None,
+             "total_return": -0.05, "max_drawdown": -0.09, "sharpe": -0.02, "final_equity": 9500.0},
+        ],
+    }
+
+
+def test_multi_pair_summary_lists_pairs_and_metrics():
+    s = chat.build_multi_pair_summary(_comparison())
+    assert "BTC/USDT" in s and "ETH/USDT" in s
+    assert "Available pairs" in s and "Best by return: BTC/USDT" in s
+    assert "inf" in s  # ETH profit factor None -> ∞ rendered as inf (no crash)
+    assert "+10.00%" in s and "-5.00%" in s
+
+
+def test_multi_pair_summary_empty_is_safe():
+    assert "no multi-pair" in chat.build_multi_pair_summary({}).lower()
+
+
+def test_answer_uses_injected_multi_pair_context_builder():
+    sent = {}
+
+    def transport(url, payload):
+        sent["messages"] = payload["messages"]
+        return '{"message": {"content": "BTC/USDT did best (+10%)."}}'
+
+    out = chat.answer("which coin did best?", _comparison(),
+                      client=chat.OllamaChat(transport=transport),
+                      context_builder=chat.build_multi_pair_summary)
+    assert out["error"] is None and "BTC/USDT" in out["answer"]
+    # the multi-pair table (not the single-pair dashboard) was placed in the prompt
+    assert "Available pairs" in sent["messages"][-1]["content"]
+
+
 def test_chat_module_imports_nothing_from_the_order_path():
     """Inv 1/3 by construction: the chat module must not import risk/execution/broker/engine —
     so there is provably no code path from a chat reply to an order."""

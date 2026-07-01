@@ -76,7 +76,8 @@ autonomous-crypto-trading-agent/
 │       ├── markets.py            # markets overview/watchlist + heatmap
 │       ├── coin_detail.py        # K-line candles + EMA overlays + readouts
 │       ├── orderbook.py          # order-book depth view (cumulative, spread)
-│       └── orders_panel.py       # order & trade panel read model (attempts/submitted/fills)
+│       ├── orders_panel.py       # order & trade panel read model (attempts/submitted/fills)
+│       └── replay_dashboard.py   # multi-pair dry-run/replay comparison model (metrics table)
 ├── backtest/                     # §8 harness
 │   ├── runner.py                 # deterministic backtest (P0); Freqtrade at P3 — ADR/PLAN
 │   ├── metrics.py                # §8.7 metric suite (CAGR/Calmar/Sharpe/Sortino…) + sample gate

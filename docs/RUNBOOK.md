@@ -89,6 +89,16 @@ python -m src.dry_run --pair BTC/USDT --timeframe 1h \
     --replay-file data/btc_usdt_1h.parquet          # no network; identical every run
 ```
 
+**Multi-pair comparison + cross-coin assistant** — replay several coins and compare them visually:
+
+```bash
+python -m src.dry_run --data-exchange kucoin --pairs "BTC/USDT,ETH/USDT,SOL/USDT" \
+    --replay-days 30 --serve-ui
+# then open http://127.0.0.1:8787/replay — a sortable metrics table (return / win% / PF /
+# max-DD / Sharpe / final equity per coin), a pair selector with an equity mini-chart + trades,
+# and a read-only AI assistant scoped to ALL pairs ("which coin did best and why?").
+```
+
 Uses the coin's **real** OHLCV (from `--data-exchange`, or a stored `.parquet`/`.csv`). Prints
 ticks / closed trades / final equity / return and writes the event log. It is a smoke of the
 *pipeline*, not an edge claim — dry-run fills are optimistic (§2) and the EMA-cross has no edge; for

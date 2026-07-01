@@ -39,6 +39,7 @@ class OperatorContext:
     agentview: Callable[[str], dict] | None = None  # pair -> agent-view overlay (signal/regime/sentiment)
     trades_tape: Callable[[str], dict] | None = None  # pair -> recent public market trades (tape)
     chat: Callable[[dict], dict] | None = None  # body{question} -> {answer,error} READ-ONLY (Inv 1); None = disabled
+    replay: Callable[[], dict] | None = None  # () -> multi-pair replay comparison model; None = no replay view
     auth_token: str | None = None  # if set, mutating writes require a matching X-Auth-Token; None = open (localhost)
 
 
@@ -181,6 +182,16 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
         except (ValueError, TypeError) as e:
             return Response(400, {"error": f"invalid request body: {e}"})
 
+    if path == "/replay":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, replay_html(), content_type="text/html; charset=utf-8")
+
+    if path == "/api/replay":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, ctx.replay() if ctx.replay else {"table": [], "pairs": []})
+
     if path == "/chat":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
@@ -253,7 +264,7 @@ def index_html() -> str:
  body.light th,body.light td{border-color:#e5e8ee} body.light .bar{background:#e5e8ee}
  body.light button{background:#eceef2;color:#1c2230;border-color:#cdd3dd}
 </style></head><body>
-<h1>Operator dashboard <a href="/pro">· pro</a> <a href="/terminal">· terminal</a> <a href="/markets">· markets</a> <a href="/orders">· orders</a> <a href="/chat">· assistant</a> <span id="ks" class="muted"></span></h1>
+<h1>Operator dashboard <a href="/pro">· pro</a> <a href="/terminal">· terminal</a> <a href="/markets">· markets</a> <a href="/orders">· orders</a> <a href="/replay">· replay</a> <a href="/chat">· assistant</a> <span id="ks" class="muted"></span></h1>
 <div class="grid" id="cards"></div>
 <div class="card" style="min-width:100%"><div class="lbl">Equity curve</div><svg id="eq" viewBox="0 0 900 130" preserveAspectRatio="none"></svg></div>
 <div class="grid" id="perf"></div>
@@ -796,6 +807,91 @@ greet();
 // deep-link: /chat?q=... (e.g. the "explain" link on a decision-log row) auto-asks on load
 const preset=new URLSearchParams(location.search).get("q");
 if(preset){ask(preset);}
+</script></body></html>"""
+
+
+def replay_html() -> str:
+    """Multi-pair dry-run/replay comparison dashboard (§12, read-only): a sortable metrics table
+    across coins, a pair selector with a per-pair equity mini-chart + trades, and the read-only AI
+    assistant scoped to the whole comparison (analyse/look up across coins). No CDN, no writes."""
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Replay comparison</title>
+<style>
+ body{font:14px system-ui,sans-serif;background:#0f1115;color:#d7dbe0;margin:0;padding:16px}
+ h1{font-size:16px;margin:0 0 6px} h2{font-size:13px;color:#8b93a1;margin:16px 0 6px} a{color:#6ea8fe}
+ .banner{background:#12202c;border:1px solid #24425a;color:#9fc7e6;padding:6px 10px;border-radius:6px;margin-bottom:12px;font-size:12px}
+ table{border-collapse:collapse;width:100%} th,td{text-align:right;padding:5px 10px;border-bottom:1px solid #232833;white-space:nowrap}
+ th:first-child,td:first-child{text-align:left} th{color:#8b93a1;font-size:11px;text-transform:uppercase;cursor:pointer}
+ tr.sel{background:#16202b} tbody tr{cursor:pointer} .ok{color:#46d17f} .bad{color:#f06a6a}
+ .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px}
+ .card{background:#12151b;border:1px solid #1f2530;border-radius:8px;padding:10px}
+ .chip{font-size:12px;padding:4px 8px;background:#161a20;border:1px solid #232833;color:#9fb4d6;border-radius:12px;cursor:pointer;margin:2px}
+ #chatlog{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto;margin:6px 0}
+ .msg{padding:6px 9px;border-radius:8px;max-width:90%;white-space:pre-wrap;line-height:1.35}
+ .you{align-self:flex-end;background:#1b3a5b} .bot{align-self:flex-start;background:#1b2230}
+ input{flex:1;padding:7px;background:#161a20;border:1px solid #232833;color:#d7dbe0;border-radius:6px}
+ button{padding:7px 12px;background:#2c4a6b;color:#fff;border:0;border-radius:6px;cursor:pointer}
+ .kpi{font-size:12px;color:#8b93a1} .kpi b{color:#d7dbe0;font-size:15px}
+</style></head><body>
+<h1>Multi-pair replay comparison <a href="/">· dashboard</a> <a href="/markets">· markets</a> <a href="/chat">· assistant</a></h1>
+<div class="banner">Read-only. Replay P&amp;L is optimistic (§2) and the dumb strategies have no validated edge —
+ use it to compare pipeline behaviour across coins, not as an edge claim. The assistant explains this data; it cannot trade.</div>
+<h2>Comparison (click a column to sort, a row to inspect)</h2>
+<table id="tbl"><thead><tr>
+ <th data-k="pair">Pair</th><th data-k="trades">Trades</th><th data-k="win_rate">Win%</th>
+ <th data-k="profit_factor">PF</th><th data-k="total_return">Return</th><th data-k="max_drawdown">MaxDD</th>
+ <th data-k="sharpe">Sharpe</th><th data-k="final_equity">Final eq</th></tr></thead><tbody></tbody></table>
+
+<div class="grid">
+ <div class="card"><h2 id="detTitle">Select a pair</h2><div id="kpis" class="kpi"></div>
+  <svg id="eq" width="100%" height="130" viewBox="0 0 400 130" preserveAspectRatio="none"></svg>
+  <h2>Trades</h2><table id="trades"><thead><tr><th>Exit</th><th>Return</th><th>P&amp;L</th></tr></thead><tbody></tbody></table>
+ </div>
+ <div class="card"><h2>Assistant — analyse across coins</h2>
+  <div id="chips"></div><div id="chatlog"></div>
+  <form id="cf" style="display:flex;gap:6px"><input id="q" placeholder="e.g. which coin did best and why? compare BTC vs ETH"><button>Ask</button></form>
+ </div>
+</div>
+<script>
+let DATA=null, SORT={k:"total_return",dir:-1}, SEL=null, hist=[];
+const pct=(x)=>(x==null?"—":((x*100).toFixed(2)+"%")), pf=(x)=>x==null?"∞":(typeof x==="number"?x.toFixed(2):"—");
+const cls=(x)=>x>=0?"ok":"bad";
+async function load(){DATA=await (await fetch("/api/replay")).json();renderTable();
+ if((DATA.table||[]).length){select((DATA.best_pair)||DATA.table[0].pair);} }
+function renderTable(){const rows=[...(DATA.table||[])].sort((a,b)=>{const v=(a[SORT.k]>b[SORT.k]?1:-1)*SORT.dir;return v;});
+ document.querySelector("#tbl tbody").innerHTML=rows.map(r=>`<tr data-p="${r.pair}" class="${r.pair===SEL?'sel':''}">
+  <td>${r.pair}</td><td>${r.trades}</td><td>${(r.win_rate*100).toFixed(0)}</td><td>${pf(r.profit_factor)}</td>
+  <td class="${cls(r.total_return)}">${pct(r.total_return)}</td><td class="bad">${pct(r.max_drawdown)}</td>
+  <td class="${cls(r.sharpe)}">${(r.sharpe||0).toFixed(3)}</td><td>${(r.final_equity||0).toFixed(0)}</td></tr>`).join("")
+  ||'<tr><td colspan=8 class=kpi>no replay data — run: python -m src.dry_run --replay-days N --pairs A,B,C</td></tr>';
+ document.querySelectorAll("#tbl tbody tr").forEach(tr=>tr.onclick=()=>tr.dataset.p&&select(tr.dataset.p));}
+document.querySelectorAll("#tbl thead th").forEach(th=>th.onclick=()=>{const k=th.dataset.k;
+ SORT=(SORT.k===k)?{k,dir:-SORT.dir}:{k,dir:-1};renderTable();});
+function select(p){SEL=p;const d=(DATA.detail||{})[p];renderTable();if(!d)return;
+ document.getElementById("detTitle").textContent=p;
+ document.getElementById("kpis").innerHTML=`<b>${pct(d.total_return)}</b> return · <b>${d.performance.trade_count}</b> trades ·
+  win <b>${(d.performance.win_rate*100).toFixed(0)}%</b> · maxDD <b>${pct(d.max_drawdown)}</b> · final <b>${(d.final_equity||0).toFixed(0)}</b>`;
+ drawEq((d.equity_curve||[]).map(e=>e.equity));
+ document.querySelector("#trades tbody").innerHTML=(d.trades||[]).slice(-40).reverse().map(t=>
+  `<tr><td>${(t.exit_time||"").slice(0,19).replace("T"," ")}</td><td class="${cls(t.return)}">${((t.return||0)*100).toFixed(2)}%</td>
+   <td class="${cls(t.pnl)}">${(t.pnl||0).toFixed(2)}</td></tr>`).join("")||"<tr><td class=kpi>no trades</td></tr>";}
+function drawEq(v){const el=document.getElementById("eq");if(!v||v.length<2){el.innerHTML="";return;}
+ const mn=Math.min(...v),mx=Math.max(...v),rng=(mx-mn)||1;
+ const pts=v.map((y,i)=>`${(i/(v.length-1)*400).toFixed(1)},${(120-(y-mn)/rng*110).toFixed(1)}`).join(" ");
+ el.innerHTML=`<polyline fill="none" stroke="#6ea8fe" stroke-width="1.5" points="${pts}"/>`;}
+// assistant (multi-pair; read-only)
+function add(c,m,t){const w=document.createElement("div");w.className="msg "+c;const h=document.createElement("div");
+ h.style.cssText="font-size:11px;color:#8b93a1";h.textContent=m;const b=document.createElement("div");b.textContent=t;
+ w.appendChild(h);w.appendChild(b);document.getElementById("chatlog").appendChild(w);w.scrollIntoView();return b;}
+async function ask(text){text=(text||"").trim();if(!text)return;add("you","you",text);const q=document.getElementById("q");q.value="";
+ const b=add("bot","assistant","…");try{const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({question:text,history:hist})});const j=await r.json();const a=j.answer||j.error||"(no answer)";b.textContent=a;
+  hist.push({role:"user",content:text});hist.push({role:"assistant",content:a});if(hist.length>12)hist=hist.slice(-12);}
+ catch(e){b.textContent="error: "+e;}}
+["Which coin did best and why?","Compare the top two pairs.","Which coin had the worst drawdown?","Summarize the whole comparison."]
+ .forEach(s=>{const c=document.createElement("span");c.className="chip";c.textContent=s;c.onclick=()=>ask(s);document.getElementById("chips").appendChild(c);});
+document.getElementById("cf").addEventListener("submit",e=>{e.preventDefault();ask(document.getElementById("q").value);});
+load();
 </script></body></html>"""
 
 
