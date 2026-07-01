@@ -51,6 +51,48 @@ class Response:
     content_type: str = "application/json"
 
 
+# ---- shared page chrome: one nav bar + favicon across every operator page (§12 polish) --------
+
+_NAV_LINKS = [("/", "Dashboard"), ("/markets", "Markets"), ("/coin", "Coin"),
+              ("/orders", "Orders"), ("/replay", "Replay"), ("/terminal", "Terminal"),
+              ("/pro", "Pro"), ("/chat", "Assistant"), ("/help", "Help")]
+
+_NAV_CSS = """
+ .topnav{display:flex;align-items:center;gap:13px;background:#12151b;border:1px solid #1f2530;
+  border-radius:8px;padding:8px 14px;margin:0 0 14px;font-size:13px;flex-wrap:wrap}
+ .topnav .brand{font-weight:600;color:#e8ecf2;margin-right:4px;letter-spacing:.3px}
+ .topnav .tag{background:#274d33;color:#7fe0a1;font-size:10px;padding:2px 7px;border-radius:9px;
+  margin-left:6px;letter-spacing:.6px}
+ .topnav a{color:#8b93a1;text-decoration:none;padding:3px 1px;border-bottom:2px solid transparent}
+ .topnav a:hover{color:#d7dbe0} .topnav a.active{color:#6ea8fe;border-bottom-color:#6ea8fe}
+ body.light .topnav{background:#fff;border-color:#d9dee5} body.light .topnav .brand{color:#222}
+ body.light .topnav a{color:#667} body.light .topnav a:hover{color:#123}"""
+
+# inline SVG favicon (no file, no CDN): a green candle glyph on the dark card colour
+_FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    '<rect width="32" height="32" rx="7" fill="#12151b"/>'
+    '<rect x="7" y="12" width="5" height="11" rx="1" fill="#f06a6a"/>'
+    '<rect x="9" y="8" width="1.6" height="19" fill="#f06a6a"/>'
+    '<rect x="19" y="7" width="5" height="12" rx="1" fill="#46d17f"/>'
+    '<rect x="21" y="4" width="1.6" height="20" fill="#46d17f"/></svg>')
+
+
+def _nav(active: str = "") -> str:
+    parts = []
+    for p, label in _NAV_LINKS:
+        cls = ' class="active"' if p == active else ""
+        parts.append(f'<a href="{p}"{cls}>{label}</a>')
+    return ('<nav class="topnav"><span class="brand">📈 AutoTrader'
+            '<span class="tag">PAPER</span></span>' + "".join(parts) + "</nav>")
+
+
+def _with_nav(html: str, active: str = "") -> str:
+    """Inject the shared top-nav + its CSS into a page template (idempotent per page)."""
+    return (html.replace("</style>", _NAV_CSS + "\n</style>", 1)
+                .replace("<body>", "<body>" + _nav(active), 1))
+
+
 # mutating write endpoints — these can place an order or halt/resume trading, so when an auth
 # token is configured they must present it. Read endpoints (GET) and the read-only POSTs
 # (/api/preview, /api/chat) stay open under the localhost assumption; the token exists to stop a
@@ -87,15 +129,25 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
     if not _auth_ok(path, ctx, headers):
         return Response(401, {"error": "missing or invalid auth token"})
 
+    if path == "/favicon.ico":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, _FAVICON_SVG, content_type="image/svg+xml")
+
+    if path == "/help":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, _with_nav(help_html(), "/help"), content_type="text/html; charset=utf-8")
+
     if path == "/":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
-        return Response(200, index_html(), content_type="text/html; charset=utf-8")
+        return Response(200, _with_nav(index_html(), "/"), content_type="text/html; charset=utf-8")
 
     if path == "/coin":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
-        return Response(200, coin_detail_html(), content_type="text/html; charset=utf-8")
+        return Response(200, _with_nav(coin_detail_html(), "/coin"), content_type="text/html; charset=utf-8")
 
     if path == "/api/coin":
         if method != "GET":
@@ -125,7 +177,7 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
     if path == "/orders":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
-        return Response(200, orders_html(), content_type="text/html; charset=utf-8")
+        return Response(200, _with_nav(orders_html(), "/orders"), content_type="text/html; charset=utf-8")
 
     if path == "/api/orders":
         if method != "GET":
@@ -146,7 +198,7 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
     if path == "/markets":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
-        return Response(200, markets_html(), content_type="text/html; charset=utf-8")
+        return Response(200, _with_nav(markets_html(), "/markets"), content_type="text/html; charset=utf-8")
 
     if path == "/api/markets":
         if method != "GET":
@@ -186,7 +238,7 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
     if path == "/replay":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
-        return Response(200, replay_html(), content_type="text/html; charset=utf-8")
+        return Response(200, _with_nav(replay_html(), "/replay"), content_type="text/html; charset=utf-8")
 
     if path == "/api/replay":
         if method != "GET":
@@ -196,7 +248,7 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
     if path == "/chat":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
-        return Response(200, chat_html(), content_type="text/html; charset=utf-8")
+        return Response(200, _with_nav(chat_html(), "/chat"), content_type="text/html; charset=utf-8")
 
     if path == "/api/chat/providers":
         if method != "GET":
@@ -271,7 +323,7 @@ def index_html() -> str:
  body.light th,body.light td{border-color:#e5e8ee} body.light .bar{background:#e5e8ee}
  body.light button{background:#eceef2;color:#1c2230;border-color:#cdd3dd}
 </style></head><body>
-<h1>Operator dashboard <a href="/pro">· pro</a> <a href="/terminal">· terminal</a> <a href="/markets">· markets</a> <a href="/orders">· orders</a> <a href="/replay">· replay</a> <a href="/chat">· assistant</a> <span id="ks" class="muted"></span></h1>
+<h1>Operator dashboard <span id="ks" class="muted"></span></h1>
 <div class="grid" id="cards"></div>
 <div class="card" style="min-width:100%"><div class="lbl">Equity curve</div><svg id="eq" viewBox="0 0 900 130" preserveAspectRatio="none"></svg></div>
 <div class="grid" id="perf"></div>
@@ -304,12 +356,15 @@ function render(d){
   const dpl=cls(d.day_return_pct,d.daily_soft_pct,d.daily_hard_pct);
   const ddc=cls(d.drawdown_pct,d.killswitch_pct/2,d.killswitch_pct);
   const grc=d.gross_exposure_pct>d.gross_cap_pct?"bad":(d.gross_exposure_pct>d.gross_cap_pct*0.8?"warn":"ok");
+  // value colour is sign-aware (a loss never shows green); the gauge bar keeps limit-distance colour
+  const dplv=d.day_return_pct>=0?"ok":(dpl==="ok"?"":dpl);
+  const sent=d.sentiment_fresh==null?"off":(d.sentiment_fresh?"fresh":"stale");
   const cards=[
    {l:"Equity",v:fmt(d.equity),c:""},
-   {l:"Day P&L %",v:fmt(d.day_return_pct),c:dpl,g:gauge(Math.abs(Math.min(0,d.day_return_pct))/Math.abs(d.daily_hard_pct)*100,dpl)},
+   {l:"Day P&L %",v:fmt(d.day_return_pct),c:dplv,g:gauge(Math.abs(Math.min(0,d.day_return_pct))/Math.abs(d.daily_hard_pct)*100,dpl)},
    {l:"Drawdown %",v:fmt(d.drawdown_pct),c:ddc,g:gauge(Math.abs(d.drawdown_pct)/Math.abs(d.killswitch_pct)*100,ddc)},
    {l:"Gross exp %",v:fmt(d.gross_exposure_pct),c:grc,g:gauge(d.gross_exposure_pct/d.gross_cap_pct*100,grc)},
-   {l:"Sentiment fresh",v:String(d.sentiment_fresh),c:""}];
+   {l:"Sentiment (P1)",v:sent,c:sent==="stale"?"warn":""}];
   document.getElementById("cards").innerHTML=cards.map(c=>
    `<div class="card"><div class="lbl">${c.l}</div><div class="val ${c.c}">${c.v}</div>${c.g||""}</div>`).join("");
   drawEquity(d.equity_curve);
@@ -602,7 +657,7 @@ def markets_html() -> str:
  #heat{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
  .tile{border-radius:6px;padding:8px;min-width:70px;color:#0f1115;font-weight:600}
 </style></head><body>
-<h1>Markets <a href="/">· dashboard</a></h1>
+<h1>Markets</h1>
 <div class="lbl">Heatmap (size = volume proxy, color = change)</div><div id="heat"></div>
 <table id="ov"><thead><tr><th>Pair</th><th>Close</th><th>Change %</th><th>ATR %</th><th>Trend</th><th>Volume</th></tr></thead><tbody></tbody></table>
 <script>
@@ -629,7 +684,7 @@ def coin_detail_html() -> str:
  h1{font-size:16px;margin:0 0 12px} a{color:#6ea8fe} .lbl{color:#8b93a1;font-size:11px;text-transform:uppercase}
  #ro span{margin-right:16px} svg{background:#171a21;border:1px solid #232833;border-radius:8px}
 </style></head><body>
-<h1>Coin detail: <span id="pair"></span> <span id="tfbtns"></span> <a href="/markets">· markets</a> <a href="/">· dashboard</a></h1>
+<h1>Coin detail: <span id="pair"></span> <span id="tfbtns"></span></h1>
 <div id="agent" style="margin:6px 0 10px;padding:8px 12px;background:#171a21;border:1px solid #232833;border-radius:8px"></div>
 <div id="ro" class="lbl"></div>
 <div id="chart" style="height:380px;border:1px solid #232833;border-radius:8px"></div>
@@ -705,7 +760,7 @@ def orders_html() -> str:
  th:first-child,td:first-child{text-align:left} th{color:#8b93a1;font-size:11px;text-transform:uppercase}
  .ok{color:#46d17f} .bad{color:#f06a6a} .agent{color:#6ea8fe} .manual{color:#e6a23c}
 </style></head><body>
-<h1>Orders &amp; trades <a href="/">· dashboard</a></h1>
+<h1>Orders &amp; trades</h1>
 <h2>Manual order (routes through the risk engine — Inv 9)</h2>
 <div>
  <select id="side"><option>buy</option><option>sell</option></select>
@@ -773,7 +828,7 @@ def chat_html() -> str:
  .cites{margin-top:6px;border-top:1px solid #232833;padding-top:4px}
  .cite{font-size:11px;color:#8b93a1;font-family:monospace} .cite b{color:#6ea8fe}
 </style></head><body>
-<h1>Assistant <a href="/">· dashboard</a> <a href="/orders">· orders</a> <a href="/coin">· coin</a></h1>
+<h1>Assistant</h1>
 <div class="banner">⚠ Read-only assistant. It explains the bot's current state — it cannot place orders, change
  limits, or touch the kill-switch. All trading is deterministic and risk-gated.</div>
 <div id="chips"></div>
@@ -847,18 +902,28 @@ def replay_html() -> str:
  button{padding:7px 12px;background:#2c4a6b;color:#fff;border:0;border-radius:6px;cursor:pointer}
  .kpi{font-size:12px;color:#8b93a1} .kpi b{color:#d7dbe0;font-size:15px}
 </style></head><body>
-<h1><span id="hdr">Replay comparison</span> <a href="/">· dashboard</a> <a href="/markets">· markets</a> <a href="/chat">· assistant</a></h1>
+<h1><span id="hdr">Replay comparison</span></h1>
 <div class="banner">Read-only. Replay P&amp;L is optimistic (§2) and the dumb strategies have no validated edge —
  use it to compare pipeline behaviour across coins, not as an edge claim. The assistant explains this data; it cannot trade.</div>
 <h2>Comparison (click a column to sort, a row to inspect)</h2>
 <table id="tbl"><thead><tr>
- <th data-k="pair" id="th0">Pair</th><th data-k="trades">Trades</th><th data-k="win_rate">Win%</th>
- <th data-k="profit_factor">PF</th><th data-k="total_return">Return</th><th data-k="max_drawdown">MaxDD</th>
- <th data-k="calmar">Calmar</th><th data-k="sharpe">Sharpe</th><th data-k="sortino">Sortino</th>
- <th data-k="var95">VaR95</th><th data-k="cvar95">CVaR95</th>
- <th data-k="mc_dd_p95">DD95</th><th data-k="mc_dd_p99">DD99</th>
- <th data-k="avg_exposure">Exp%</th><th data-k="time_in_market">TiM%</th>
- <th data-k="final_equity">Final eq</th></tr></thead><tbody></tbody></table>
+ <th data-k="pair" id="th0">Pair</th>
+ <th data-k="trades" title="Number of closed round-trip trades">Trades</th>
+ <th data-k="win_rate" title="Share of closed trades that made money">Win%</th>
+ <th data-k="profit_factor" title="Gross profit ÷ gross loss. >1 = profitable overall; ∞ = no losing trade">PF</th>
+ <th data-k="total_return" title="Final equity vs starting equity">Return</th>
+ <th data-k="max_drawdown" title="Worst peak-to-trough fall of equity">MaxDD</th>
+ <th data-k="calmar" title="Return ÷ |max drawdown| — reward per unit of worst pain. Higher is better">Calmar</th>
+ <th data-k="sharpe" title="Average return ÷ volatility. Rewards steady gains">Sharpe</th>
+ <th data-k="sortino" title="Like Sharpe but only punishes downside swings">Sortino</th>
+ <th data-k="var95" title="Worst-5% single-tick loss (Value at Risk)">VaR95</th>
+ <th data-k="cvar95" title="Average of the worst-5% losses — the honest tail number">CVaR95</th>
+ <th data-k="mc_dd_p95" title="Monte-Carlo drawdown, 95%-worst reshuffle of the returns">DD95</th>
+ <th data-k="mc_dd_p99" title="Monte-Carlo drawdown, 99%-worst reshuffle (deeper tail)">DD99</th>
+ <th data-k="avg_exposure" title="Average share of equity deployed in positions">Exp%</th>
+ <th data-k="time_in_market" title="Share of time holding any position">TiM%</th>
+ <th data-k="final_equity" title="Equity at the end of the replay">Final eq</th></tr></thead><tbody></tbody></table>
+<p class="kpi">Hover a column header for what it means — full glossary on <a href="/help">Help</a>.</p>
 
 <div class="grid">
  <div class="card"><h2 id="detTitle">Select a pair</h2><div id="kpis" class="kpi"></div>
@@ -930,6 +995,100 @@ document.getElementById("cf").addEventListener("submit",e=>{e.preventDefault();a
  if(ps.length<=1)pv.parentElement.style.display="none";}catch(e){document.getElementById("prov").parentElement.style.display="none";}})();
 load();
 </script></body></html>"""
+
+
+def help_html() -> str:
+    """Beginner help page (§12): what each page shows, every metric in plain language (EN + VI),
+    and the safety rules. Static, read-only, self-contained — the on-ramp for a new operator."""
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Help · AutoTrader</title>
+<style>
+ body{font:14px system-ui,sans-serif;background:#0f1115;color:#d7dbe0;margin:0;padding:16px;max-width:1100px}
+ h1{font-size:17px;margin:0 0 10px} h2{font-size:14px;color:#9fc7e6;margin:22px 0 8px;border-bottom:1px solid #232833;padding-bottom:4px}
+ table{border-collapse:collapse;width:100%;font-size:13px} th,td{text-align:left;padding:6px 10px;border-bottom:1px solid #1d232e;vertical-align:top}
+ th{color:#8b93a1;font-size:11px;text-transform:uppercase} td:first-child{white-space:nowrap;color:#e8ecf2;font-weight:600}
+ .vi{color:#8b93a1;display:block;margin-top:2px} code{background:#161a20;border:1px solid #232833;border-radius:4px;padding:1px 6px;font-size:12px}
+ .safe{background:#1c1520;border:1px solid #4a2a35;border-radius:8px;padding:10px 14px;margin:10px 0}
+ .safe b{color:#f0a0a0} li{margin:4px 0;line-height:1.45} .ok{color:#46d17f}
+</style></head><body>
+<h1>Help — how to read this software <span class="vi">Trợ giúp — cách đọc phần mềm này</span></h1>
+
+<div class="safe"><b>This is PAPER trading.</b> No real money is used anywhere. Every simulated order still
+passes the same risk engine that a real order would; the AI assistant can only <i>explain</i> — it can never trade.
+<span class="vi"><b>Đây là giao dịch GIẤY (mô phỏng).</b> Không có tiền thật ở bất kỳ đâu. Mọi lệnh mô phỏng vẫn đi qua
+đúng bộ máy kiểm soát rủi ro như lệnh thật; trợ lý AI chỉ <i>giải thích</i> — không bao giờ được đặt lệnh.</span></div>
+
+<h2>The pages · Các trang</h2>
+<table>
+<tr><th>Page</th><th>What it shows · Nội dung</th></tr>
+<tr><td><a href="/">Dashboard</a></td><td>Equity, today's P&amp;L vs limits, drawdown vs kill-switch, open positions, decision log.
+ <span class="vi">Vốn, lãi/lỗ hôm nay so với giới hạn, mức sụt giảm so với công tắc dừng khẩn, vị thế đang mở, nhật ký quyết định.</span></td></tr>
+<tr><td><a href="/markets">Markets</a></td><td>Watchlist + heatmap across coins. <span class="vi">Danh sách theo dõi + bản đồ nhiệt các coin.</span></td></tr>
+<tr><td><a href="/coin">Coin</a></td><td>Candlestick chart with EMA/RSI overlays, order book depth, agent view ("why acting / not").
+ <span class="vi">Biểu đồ nến kèm EMA/RSI, độ sâu sổ lệnh, góc nhìn agent ("vì sao hành động / không").</span></td></tr>
+<tr><td><a href="/orders">Orders</a></td><td>Every order attempt with its risk verdict; manual order form (still risk-gated).
+ <span class="vi">Mọi lần thử đặt lệnh kèm phán quyết rủi ro; form đặt lệnh tay (vẫn qua kiểm soát rủi ro).</span></td></tr>
+<tr><td><a href="/replay">Replay</a></td><td>Compare coins or strategies over PAST data — the metric table below explains every column.
+ <span class="vi">So sánh coin hoặc chiến lược trên dữ liệu QUÁ KHỨ — bảng chỉ số bên dưới giải thích từng cột.</span></td></tr>
+<tr><td><a href="/terminal">Terminal</a> / <a href="/pro">Pro</a></td><td>Single-screen dense views (all widgets tiled).
+ <span class="vi">Màn hình gộp mọi widget (cho người dùng thành thạo).</span></td></tr>
+<tr><td><a href="/chat">Assistant</a></td><td>Ask questions about the current state in plain language; read-only.
+ <span class="vi">Hỏi đáp về trạng thái hiện tại bằng ngôn ngữ tự nhiên; chỉ đọc.</span></td></tr>
+</table>
+
+<h2>Reading the numbers · Đọc các chỉ số</h2>
+<table>
+<tr><th>Metric</th><th>Meaning · Ý nghĩa</th></tr>
+<tr><td>Equity</td><td>Total account value (cash + open positions, marked to market).
+ <span class="vi">Tổng giá trị tài khoản (tiền mặt + vị thế đang mở, định giá theo thị trường).</span></td></tr>
+<tr><td>Return</td><td>Final equity vs. starting equity, as %. <span class="vi">Vốn cuối so với vốn đầu, tính theo %.</span></td></tr>
+<tr><td>Win rate</td><td>Share of closed trades that made money. <span class="vi">Tỷ lệ các lệnh đã đóng có lãi.</span></td></tr>
+<tr><td>PF (Profit Factor)</td><td>Gross profit ÷ gross loss. &gt;1 = profitable overall; ∞ = no losing trade yet.
+ <span class="vi">Tổng lãi ÷ tổng lỗ. &gt;1 = tổng thể có lãi; ∞ = chưa có lệnh lỗ nào.</span></td></tr>
+<tr><td>Max DD (Drawdown)</td><td>Worst peak-to-trough fall of equity. −10% means at some point you were down 10% from the best value.
+ <span class="vi">Mức sụt giảm sâu nhất từ đỉnh xuống đáy của vốn. −10% nghĩa là có lúc bạn mất 10% so với đỉnh.</span></td></tr>
+<tr><td>Calmar</td><td>Return ÷ |max drawdown| — reward earned per unit of worst pain. Higher is better.
+ <span class="vi">Lợi nhuận ÷ |mức sụt giảm sâu nhất| — lãi thu được trên mỗi đơn vị "đau" tệ nhất. Càng cao càng tốt.</span></td></tr>
+<tr><td>Sharpe</td><td>Average return ÷ volatility of returns. Rewards steady gains, punishes swings (both directions).
+ <span class="vi">Lợi nhuận trung bình ÷ độ biến động. Thưởng cho tăng trưởng đều, phạt dao động mạnh (cả hai chiều).</span></td></tr>
+<tr><td>Sortino</td><td>Like Sharpe but only punishes DOWNSIDE swings — kinder to strategies that jump up.
+ <span class="vi">Giống Sharpe nhưng chỉ phạt dao động GIẢM — công bằng hơn với chiến lược hay bật tăng.</span></td></tr>
+<tr><td>VaR 95%</td><td>On a bad day (worst 5%), expect at least this loss per tick.
+ <span class="vi">Vào ngày xấu (5% tệ nhất), dự kiến lỗ ít nhất mức này mỗi phiên.</span></td></tr>
+<tr><td>CVaR 95%</td><td>The AVERAGE of those worst-5% losses — always at least as bad as VaR; the honest tail number.
+ <span class="vi">TRUNG BÌNH của nhóm 5% lỗ tệ nhất — luôn xấu bằng hoặc hơn VaR; con số trung thực về rủi ro đuôi.</span></td></tr>
+<tr><td>DD95 / DD99</td><td>Monte-Carlo: reshuffle the returns 500 times; the drawdown you'd expect in the 95%/99% worst run.
+ One backtest is one draw of luck — this shows the distribution.
+ <span class="vi">Monte-Carlo: xáo trộn chuỗi lợi nhuận 500 lần; mức sụt giảm dự kiến ở kịch bản tệ nhất 95%/99%.
+ Một lần backtest chỉ là một lần may rủi — đây là cả phân phối.</span></td></tr>
+<tr><td>Exp% (Exposure)</td><td>Average share of equity deployed in positions. <span class="vi">Tỷ lệ vốn trung bình đang nằm trong vị thế.</span></td></tr>
+<tr><td>TiM% (Time in Market)</td><td>Share of time holding any position. <span class="vi">Tỷ lệ thời gian đang giữ vị thế.</span></td></tr>
+<tr><td>Kill-switch</td><td>The emergency stop. Engaging it halts ALL new entries immediately; only a human can re-arm.
+ <span class="vi">Công tắc dừng khẩn cấp. Bật lên là chặn ngay MỌI lệnh vào mới; chỉ con người mới mở lại được.</span></td></tr>
+<tr><td>DSR (research)</td><td>Deflated Sharpe: Sharpe corrected for how many strategies were tried. A strategy only counts as a real edge at DSR ≥ 0.95.
+ <span class="vi">Sharpe đã khấu trừ theo số chiến lược đã thử. Chỉ được coi là lợi thế thật khi DSR ≥ 0.95.</span></td></tr>
+</table>
+
+<h2>Safety rules · Nguyên tắc an toàn</h2>
+<ul>
+<li>No real capital until every phase gate passes and a human signs off. <span class="vi">Không dùng tiền thật cho tới khi qua đủ các cổng kiểm tra và có người phê duyệt.</span></li>
+<li>Every order — bot or manual — passes the same risk engine; there is no backdoor. <span class="vi">Mọi lệnh — bot hay tay — đều qua cùng một bộ kiểm soát rủi ro; không có đường tắt.</span></li>
+<li>The AI (local or cloud) is read-only: it explains, it never trades. <span class="vi">AI (local hay cloud) chỉ đọc: giải thích, không bao giờ giao dịch.</span></li>
+<li>A green replay/backtest number is NOT proof of an edge — costs, luck and overfitting lie. Trust only walk-forward + DSR.
+ <span class="vi">Con số xanh trong replay/backtest KHÔNG chứng minh có lợi thế — phí, may mắn và overfitting đánh lừa. Chỉ tin walk-forward + DSR.</span></li>
+</ul>
+
+<h2>Quick start · Bắt đầu nhanh</h2>
+<ul>
+<li><code>python -m src.dry_run --data-exchange kucoin --pair BTC/USDT --replay-days 30 --serve-ui</code>
+ — replay 30 days of real data, then browse the result here. <span class="vi">— chạy lại 30 ngày dữ liệu thật rồi xem kết quả tại đây.</span></li>
+<li><code>python -m src.dry_run --pairs "BTC/USDT,ETH/USDT,SOL/USDT" --replay-days 30 --serve-ui</code>
+ — compare coins on <a href="/replay">/replay</a>. <span class="vi">— so sánh các coin.</span></li>
+<li><code>python -m src.dry_run --data-exchange bitbank --pair BTC/JPY --iterations 0 --serve-ui</code>
+ — the live paper loop (the real ≥30-day run). <span class="vi">— vòng lặp giấy chạy thật (đợt ≥30 ngày).</span></li>
+</ul>
+<p class="ok">Full operator guide: <code>docs/RUNBOOK.md</code></p>
+</body></html>"""
 
 
 def serve(ctx: OperatorContext, *, host: str = "127.0.0.1", port: int = 8787) -> None:

@@ -32,6 +32,13 @@ dev = [
   "mypy",
 ]
 
+# Beginner-friendly console commands (installed by `pip install -e .`):
+#   autotrader     — the paper dry-run / replay CLI (same flags as `python -m src.dry_run`)
+#   autotrader-ui  — the read-only operator dashboard on a demo snapshot
+[project.scripts]
+autotrader = "src.dry_run:main"
+autotrader-ui = "src.ui.server:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*", "backtest*"]

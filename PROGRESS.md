@@ -714,6 +714,23 @@ The assistant was local-Ollama-only; added **opt-in cloud providers** while keep
   build_chat_router key-gating, providers endpoint). Live HTTP smoke: 3 providers switchable per
   request. Read-only on every backend (Inv 1); default local Ollama. Suite **587→591**, ruff clean.
 
+### 2026-07-01 (session) — professional polish + beginner on-ramp
+Package of UX/professionalism work (no trading-logic changes):
+- **Shared top-nav + favicon** on all standard pages (`_nav`/`_with_nav` inject one consistent
+  chrome: brand + PAPER tag + active-tab highlight; inline SVG favicon at `/favicon.ico`); the
+  ad-hoc per-page `<h1>` link clusters removed. Light-theme overrides included.
+- **`/help` page (bilingual EN/VI):** what each page shows, every metric in plain language (Equity,
+  PF, MaxDD, Calmar, Sharpe/Sortino, VaR/CVaR, MC-DD, exposure, kill-switch, DSR), the safety rules,
+  and a quick-start. **Tooltips** on every `/replay` column header (hover = plain-language meaning).
+- **Beginner-friendly KPI fixes:** Day-P&L value is sign-aware (a loss never renders green; the
+  gauge bar keeps limit-distance colour); sentiment tile shows off/fresh/stale instead of `null`.
+- **GitHub Actions CI** (`.github/workflows/ci.yml`: ruff + pytest, offline) + README badge.
+- **Console commands** (`[project.scripts]`): `autotrader` (= `python -m src.dry_run`) and
+  `autotrader-ui` (demo dashboard). Verified installed and running.
+- **README:** badge, dashboard screenshot (`docs/img/` captured with headless Chromium off the
+  demo server), 2-line "new here?" on-ramp.
+- +2 tests (help/favicon; every page carries the nav). Suite **591→593**, ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

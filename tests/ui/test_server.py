@@ -134,6 +134,24 @@ def test_chat_providers_endpoint():
     assert handle_request("POST", "/api/chat/providers", {}, ctx).status == 405
 
 
+def test_help_page_and_favicon_are_served():
+    ctx = _ctx()
+    help_page = handle_request("GET", "/help", None, ctx)
+    assert help_page.status == 200 and help_page.content_type.startswith("text/html")
+    # bilingual beginner glossary is present
+    assert "Profit Factor" in help_page.body and "Trợ giúp" in help_page.body
+    fav = handle_request("GET", "/favicon.ico", None, ctx)
+    assert fav.status == 200 and fav.content_type == "image/svg+xml" and "<svg" in fav.body
+
+
+def test_pages_carry_the_shared_nav():
+    # every standard page gets the one top-nav (professional, consistent chrome)
+    for path in ("/", "/markets", "/coin", "/orders", "/replay", "/chat", "/help"):
+        page = handle_request("GET", path, None, _ctx())
+        assert page.status == 200 and 'class="topnav"' in page.body, path
+        assert 'href="/help"' in page.body, path  # help reachable from everywhere
+
+
 def test_unknown_path_is_404():
     assert handle_request("GET", "/api/nope", None, _ctx()).status == 404
 

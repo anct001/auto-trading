@@ -1,11 +1,26 @@
 # Autonomous Crypto Trading Agent
 
+[![CI](https://github.com/anct001/auto-trading/actions/workflows/ci.yml/badge.svg)](https://github.com/anct001/auto-trading/actions/workflows/ci.yml)
+
 A **solo-operator, paper-first, phase-gated** automated crypto-trading system. A local LLM is
 an out-of-loop researcher; a deterministic, backtested, risk-capped engine makes every trade.
 
 > ⚠️ **No real capital is used before the Phase 3 DONE-GATE.** No leverage before Phase 5.
 > Spot-only (long-or-cash) before then. This is not financial advice — see
 > [`docs/MASTER_DRIVER.md`](docs/MASTER_DRIVER.md) §0 and §11.
+
+![Operator dashboard](docs/img/dashboard.png)
+
+The self-hosted operator UI (no CDN, data never leaves your machine): control dashboard,
+markets/coin/orders views, multi-pair & multi-strategy replay comparison, a read-only AI
+assistant (local Ollama by default; optional Anthropic/OpenAI/Gemini), and a built-in
+**[bilingual EN/VI help page](docs/img/help.png)** explaining every metric for newcomers.
+New here? Start the demo UI and open **/help**:
+
+```bash
+pip install -e ".[dev]"
+autotrader-ui          # demo dashboard on http://127.0.0.1:8787 (no keys, no network)
+```
 
 ## Read these first (orientation order)
 
@@ -76,7 +91,8 @@ does **not** close P0.
 ### Run the paper dry-run loop (needs network)
 
 ```bash
-python -m src.dry_run --data-exchange kraken --pair BTC/USDT --timeframe 1h --iterations 1
+# `autotrader` is the installed alias for `python -m src.dry_run` (same flags)
+autotrader --data-exchange kraken --pair BTC/USDT --timeframe 1h --iterations 1
 # --iterations 0 runs forever (polls every --poll-seconds); writes events/dry_run.jsonl
 ```
 
