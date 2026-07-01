@@ -643,6 +643,18 @@ scoped to all of them:
   table in context and answers "SOL did best". Suite **568→578**, ruff clean. Read-only throughout
   (Inv 1); still an optimistic-fill pipeline view (§2), not an edge claim.
 
+### 2026-06-30 (session, cont.) — richer replay metrics (Calmar, VaR/CVaR, exposure)
+Enriched the multi-pair comparison table + cross-coin chat with pro-desk metrics:
+- `ui/replay_dashboard.ReplayResult` now also carries **Calmar** (total_return/|maxDD|), **VaR95**
+  and **CVaR95** (from `backtest.risk_analytics` over per-tick equity returns), **avg_exposure**
+  and **time_in_market**. To feed exposure, `DryRunner._record_equity` now records per-tick gross
+  exposure (gross position value / equity) alongside equity — backward-compatible extra key.
+- Surfaced in the `/replay` table (new sortable columns), the chat multi-pair summary (so the AI
+  can reason over risk/exposure), and JSON. +1 test (calmar/VaR/CVaR/exposure) + updated fixtures.
+- **Verified on REAL data:** kucoin BTC/ETH/SOL 20d — all columns populate (e.g. SOL Calmar −0.29,
+  VaR95 −0.167%, CVaR95 −0.214%, exposure 8% / time-in-market 43%); CVaR ≤ VaR as expected. Suite
+  **578→579**, ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

@@ -94,9 +94,9 @@ python -m src.dry_run --pair BTC/USDT --timeframe 1h \
 ```bash
 python -m src.dry_run --data-exchange kucoin --pairs "BTC/USDT,ETH/USDT,SOL/USDT" \
     --replay-days 30 --serve-ui
-# then open http://127.0.0.1:8787/replay — a sortable metrics table (return / win% / PF /
-# max-DD / Sharpe / final equity per coin), a pair selector with an equity mini-chart + trades,
-# and a read-only AI assistant scoped to ALL pairs ("which coin did best and why?").
+# then open http://127.0.0.1:8787/replay — a sortable metrics table (return / win% / PF / max-DD /
+# Calmar / Sharpe / VaR95 / CVaR95 / avg-exposure / time-in-market / final equity per coin), a pair
+# selector with an equity mini-chart + trades, and a read-only AI assistant scoped to ALL pairs.
 ```
 
 Uses the coin's **real** OHLCV (from `--data-exchange`, or a stored `.parquet`/`.csv`). Prints

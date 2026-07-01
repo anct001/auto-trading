@@ -211,10 +211,15 @@ class DryRunner:
             return None if self._buffer is None else self._buffer.copy()
 
     def _record_equity(self) -> None:
-        """Append the current marked paper equity (caller must hold self._lock)."""
+        """Append the current marked paper equity + exposure (caller must hold self._lock)."""
+        marks = self.marks()
+        eq = self.account.equity(marks)
+        gross = sum(p.value(marks[pair]) for pair, p in self.account.positions.items()
+                    if pair in marks)
         self._equity_history.append({
             "t": datetime.now(timezone.utc).isoformat(),
-            "equity": self.account.equity(self.marks()),
+            "equity": eq,
+            "exposure": (gross / eq) if eq > 0 else 0.0,  # gross position value / equity (time-in-market)
         })
         if len(self._equity_history) > self._equity_cap:
             self._equity_history = self._equity_history[-self._equity_cap:]

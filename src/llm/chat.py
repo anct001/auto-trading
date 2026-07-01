@@ -197,7 +197,12 @@ def build_multi_pair_summary(snapshot: dict) -> str:
             f"  - {row.get('pair')}: return {_fmt_pct((row.get('total_return') or 0) * 100)}, "
             f"trades {row.get('trades')}, win rate {wr_s}, profit factor {pf_s}, "
             f"max DD {_fmt_pct((row.get('max_drawdown') or 0) * 100)}, "
-            f"sharpe {float(row.get('sharpe') or 0):.3f}, final equity {row.get('final_equity')}"
+            f"Calmar {float(row.get('calmar') or 0):.2f}, sharpe {float(row.get('sharpe') or 0):.3f}, "
+            f"VaR95 {_fmt_pct((row.get('var95') or 0) * 100)}, "
+            f"CVaR95 {_fmt_pct((row.get('cvar95') or 0) * 100)}, "
+            f"avg exposure {_fmt_pct((row.get('avg_exposure') or 0) * 100)}, "
+            f"time in market {_fmt_pct((row.get('time_in_market') or 0) * 100)}, "
+            f"final equity {row.get('final_equity')}"
         )
     return "\n".join(lines)
 

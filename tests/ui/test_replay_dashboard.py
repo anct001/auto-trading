@@ -10,8 +10,9 @@ from src.ui.replay_dashboard import (
 )
 
 
-def _eq(*vals):
-    return [{"t": str(i), "equity": v} for i, v in enumerate(vals)]
+def _eq(*vals, exposure=None):
+    return [{"t": str(i), "equity": v, "exposure": (exposure[i] if exposure else 0.0)}
+            for i, v in enumerate(vals)]
 
 
 def test_summarize_computes_return_drawdown_and_trade_stats():
@@ -34,7 +35,22 @@ def test_summarize_handles_empty_equity_and_trades():
     r = summarize_result("Y", trades=[], equity_history=[], start_equity=10000.0)
     assert r.final_equity == 10000.0 and r.total_return == 0.0
     assert r.max_drawdown == 0.0 and r.sharpe == 0.0
+    assert r.calmar == 0.0 and r.var95 == 0.0 and r.cvar95 == 0.0
+    assert r.avg_exposure == 0.0 and r.time_in_market == 0.0
     assert r.performance["trade_count"] == 0
+
+
+def test_summarize_computes_calmar_var_cvar_and_exposure():
+    # equity dips then recovers; exposure held 3 of 5 ticks
+    r = summarize_result("X", trades=[],
+                         equity_history=_eq(100, 110, 90, 95, 120,
+                                            exposure=[0.0, 0.8, 0.8, 0.8, 0.0]),
+                         start_equity=100.0)
+    assert r.calmar > 0  # positive return over a real drawdown
+    assert math.isclose(r.calmar, r.total_return / abs(r.max_drawdown), rel_tol=1e-9)
+    assert r.var95 <= 0.0 and r.cvar95 <= r.var95   # CVaR at least as bad as VaR (tail)
+    assert math.isclose(r.time_in_market, 3 / 5, rel_tol=1e-9)
+    assert 0.0 < r.avg_exposure < 0.8
 
 
 def test_comparison_sorts_by_return_and_flags_best_worst():
@@ -55,12 +71,16 @@ def test_comparison_sorts_by_return_and_flags_best_worst():
 
 def test_comparison_is_json_safe_infinite_profit_factor_stays_none():
     import json
-    r = ReplayResult("Z", 10000.0, 10500.0, 0.05, -0.01, 0.5,
-                     {"trade_count": 1, "profit_factor": None, "win_rate": 1.0, "total_pnl": 500.0},
-                     trades=[], equity_curve=[])
+    r = ReplayResult(
+        pair="Z", start_equity=10000.0, final_equity=10500.0, total_return=0.05,
+        max_drawdown=-0.01, sharpe=0.5, calmar=5.0, var95=-0.02, cvar95=-0.03,
+        avg_exposure=0.4, time_in_market=0.6,
+        performance={"trade_count": 1, "profit_factor": None, "win_rate": 1.0, "total_pnl": 500.0})
     comp = build_replay_comparison({"Z": r})
     json.dumps(comp)  # must not raise (None, not float('inf'))
-    assert comp["table"][0]["profit_factor"] is None
+    row = comp["table"][0]
+    assert row["profit_factor"] is None
+    assert row["calmar"] == 5.0 and row["var95"] == -0.02 and row["avg_exposure"] == 0.4
 
 
 def test_comparison_empty_is_safe():

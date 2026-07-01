@@ -840,7 +840,9 @@ def replay_html() -> str:
 <table id="tbl"><thead><tr>
  <th data-k="pair">Pair</th><th data-k="trades">Trades</th><th data-k="win_rate">Win%</th>
  <th data-k="profit_factor">PF</th><th data-k="total_return">Return</th><th data-k="max_drawdown">MaxDD</th>
- <th data-k="sharpe">Sharpe</th><th data-k="final_equity">Final eq</th></tr></thead><tbody></tbody></table>
+ <th data-k="calmar">Calmar</th><th data-k="sharpe">Sharpe</th><th data-k="var95">VaR95</th>
+ <th data-k="cvar95">CVaR95</th><th data-k="avg_exposure">Exp%</th><th data-k="time_in_market">TiM%</th>
+ <th data-k="final_equity">Final eq</th></tr></thead><tbody></tbody></table>
 
 <div class="grid">
  <div class="card"><h2 id="detTitle">Select a pair</h2><div id="kpis" class="kpi"></div>
@@ -862,8 +864,11 @@ function renderTable(){const rows=[...(DATA.table||[])].sort((a,b)=>{const v=(a[
  document.querySelector("#tbl tbody").innerHTML=rows.map(r=>`<tr data-p="${r.pair}" class="${r.pair===SEL?'sel':''}">
   <td>${r.pair}</td><td>${r.trades}</td><td>${(r.win_rate*100).toFixed(0)}</td><td>${pf(r.profit_factor)}</td>
   <td class="${cls(r.total_return)}">${pct(r.total_return)}</td><td class="bad">${pct(r.max_drawdown)}</td>
-  <td class="${cls(r.sharpe)}">${(r.sharpe||0).toFixed(3)}</td><td>${(r.final_equity||0).toFixed(0)}</td></tr>`).join("")
-  ||'<tr><td colspan=8 class=kpi>no replay data — run: python -m src.dry_run --replay-days N --pairs A,B,C</td></tr>';
+  <td class="${cls(r.calmar)}">${(r.calmar||0).toFixed(2)}</td><td class="${cls(r.sharpe)}">${(r.sharpe||0).toFixed(3)}</td>
+  <td class="bad">${pct(r.var95)}</td><td class="bad">${pct(r.cvar95)}</td>
+  <td>${((r.avg_exposure||0)*100).toFixed(0)}</td><td>${((r.time_in_market||0)*100).toFixed(0)}</td>
+  <td>${(r.final_equity||0).toFixed(0)}</td></tr>`).join("")
+  ||'<tr><td colspan=13 class=kpi>no replay data — run: python -m src.dry_run --replay-days N --pairs A,B,C</td></tr>';
  document.querySelectorAll("#tbl tbody tr").forEach(tr=>tr.onclick=()=>tr.dataset.p&&select(tr.dataset.p));}
 document.querySelectorAll("#tbl thead th").forEach(th=>th.onclick=()=>{const k=th.dataset.k;
  SORT=(SORT.k===k)?{k,dir:-SORT.dir}:{k,dir:-1};renderTable();});
