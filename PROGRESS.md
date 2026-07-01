@@ -554,6 +554,23 @@ gate on the *dangerous* writes so the surface is safe if ever exposed off localh
 - +2 tests; live HTTP smoke OK (order/kill-switch 401 without token, 200 with; preview/dashboard
   open). Suite **541→543**, ruff clean.
 
+### 2026-06-30 (session, cont.) — edge research a3: funding-rate carry (new information source)
+Acted on the findings doc's own recommendation (TA/cross-sectional/regime all failed DSR → try a
+*different information source*). Built the funding path, TDD, invariant-safe (spot long-or-flat, no
+leverage/shorting — funding is only the signal; ADR 0002: funding is research/viewing data):
+- `src/data/funding.py` — `fetch_funding_history` (paginate `fetch_funding_rate_history`, drop
+  still-forming interval, causal, mirrors feed.py) + `align_funding` (`merge_asof` backward: each
+  candle sees only funding known at/before its close — no look-ahead §8.4). +7 tests.
+- `src/strategy/funding_carry.py` — `FundingCarry`: long spot when smoothed funding ≤ threshold
+  (contrarian to crowd positioning), else flat; intent-only, causal, 2 params, NaN→fail-flat. +7
+  tests (incl. causality prefix==full and backtest-integration lock).
+- `scripts/funding_edge_search.py` — variant set through the SAME walk-forward + Deflated-Sharpe +
+  shared journal (§5), must beat buy-and-hold.
+- **NOT yet run on real data:** cloud env is geo-blocked from Bybit (403 CloudFront, like Binance
+  451) → the real fetch+search runs on the operator's machine (command in findings doc). Offline
+  integration proven (synthetic → align → FundingCarry → walk-forward → DSR, correctly rejects
+  random data). Findings doc updated (a3). Suite **543→557**, ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

@@ -33,6 +33,7 @@ autonomous-crypto-trading-agent/
 │   │   └── clock.py              # NTP / skew reject (§9)
 │   ├── data/                     # §2 data layer
 │   │   ├── feed.py               # ccxt OHLCV fetch
+│   │   ├── funding.py            # §8 perp funding-rate history + causal align (research signal)
 │   │   ├── store.py              # parquet store
 │   │   └── quality.py            # §8 data-quality gate (bad/dup ts, ≤0 price, spikes, vol)
 │   ├── features/                 # §15 single feature path (backtest AND live share this)
@@ -41,6 +42,7 @@ autonomous-crypto-trading-agent/
 │   ├── strategy/                 # §5 strategies — deterministic, declare target regime
 │   │   ├── base.py               # interface (emits intent, never sizes)
 │   │   ├── ema_cross.py          # the "deliberately dumb" first strategy
+│   │   ├── funding_carry.py      # §5 funding-rate carry (spot long-or-flat; contrarian to crowd)
 │   │   ├── shadow.py             # §15 shadow-mode harness (hypothetical P&L, never trades)
 │   │   └── regime.py             # §5 deterministic regime gate + regime_state.json I/O
 │   ├── risk/                     # §4 RISK ENGINE — first-class; the single gate (Invariant 3)
