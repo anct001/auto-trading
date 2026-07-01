@@ -253,6 +253,28 @@ def _http_post(url: str, payload: dict) -> str:
         return resp.read().decode("utf-8")
 
 
+def _http_post_headers(url: str, payload: dict, headers: dict) -> str:
+    """POST JSON with extra headers (auth). Used by the cloud backends; key never logged here."""
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json", **headers})
+    with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 (operator-configured host)
+        return resp.read().decode("utf-8")
+
+
+def _split_system(messages: list[dict]) -> tuple[str, list[dict]]:
+    """Split a build_messages list into (system_prompt_text, non-system turns) for APIs (Anthropic)
+    that take the system prompt as a separate field rather than a ``role:"system"`` message."""
+    system = ""
+    turns: list[dict] = []
+    for m in messages:
+        if m.get("role") == "system":
+            system = str(m.get("content", ""))
+        else:
+            turns.append(m)
+    return system, turns
+
+
 class OllamaChat:
     """Read-only operator chat via a local Ollama model. Off the trading path (Inv 1/2)."""
 
@@ -282,7 +304,130 @@ class OllamaChat:
         return parse_chat_response(self._transport(self.url, payload))
 
 
-def answer(question: str, snapshot: dict, *, client: OllamaChat, history: object = None,
+# --- OPT-IN cloud providers (data LEAVES the machine — see build_chat_client) -----------------
+
+def parse_anthropic_response(raw: str) -> str:
+    """Extract assistant text from an Anthropic Messages API reply (or raise ValueError)."""
+    try:
+        body = json.loads(raw)
+    except (json.JSONDecodeError, TypeError) as e:
+        raise ValueError(f"malformed anthropic response: {e}") from e
+    if isinstance(body, dict):
+        if body.get("type") == "error":
+            raise ValueError(f"anthropic error: {(body.get('error') or {}).get('message')}")
+        content = body.get("content")
+        if isinstance(content, list):
+            texts = [b.get("text", "") for b in content
+                     if isinstance(b, dict) and b.get("type") == "text"]
+            if any(t.strip() for t in texts):
+                return "".join(texts).strip()
+    raise ValueError("no text content in anthropic response")
+
+
+def parse_openai_response(raw: str) -> str:
+    """Extract assistant text from an OpenAI-compatible chat/completions reply (or raise)."""
+    try:
+        body = json.loads(raw)
+    except (json.JSONDecodeError, TypeError) as e:
+        raise ValueError(f"malformed openai response: {e}") from e
+    if isinstance(body, dict):
+        if body.get("error"):
+            raise ValueError(f"openai error: {(body.get('error') or {}).get('message')}")
+        choices = body.get("choices")
+        if isinstance(choices, list) and choices:
+            msg = choices[0].get("message") if isinstance(choices[0], dict) else None
+            if isinstance(msg, dict) and msg.get("content") is not None:
+                return str(msg["content"]).strip()
+    raise ValueError("no message content in openai response")
+
+
+class AnthropicChat:
+    """Read-only operator chat via the Anthropic Messages API (Claude). CLOUD provider — OPT-IN.
+
+    The dashboard snapshot is sent to Anthropic (data leaves the machine). The API key is held as a
+    `core.secrets.Secret` (masked in logs/repr) and revealed only for the `x-api-key` header, never
+    logged. Off the trading path (Inv 1/2); read-only (Inv 1)."""
+
+    def __init__(self, *, api_key, model: str = "claude-opus-4-8",
+                 host: str = "https://api.anthropic.com", max_tokens: int = 1024,
+                 transport: ChatTransport | None = None):
+        from src.core.secrets import Secret
+        self._key = api_key if isinstance(api_key, Secret) else Secret(str(api_key))
+        self.model = model
+        self.url = f"{host.rstrip('/')}/v1/messages"
+        self.max_tokens = max_tokens
+        self._transport = transport or self._post
+
+    def _post(self, url: str, payload: dict) -> str:
+        return _http_post_headers(url, payload, {
+            "x-api-key": self._key.reveal(), "anthropic-version": "2023-06-01"})
+
+    def answer(self, question: str, snapshot: dict, history: object = None, *,
+               context_builder=build_context_summary) -> str:
+        system, turns = _split_system(
+            build_messages(question, snapshot, history, context_builder=context_builder))
+        payload = {"model": self.model, "max_tokens": self.max_tokens,
+                   "system": system, "messages": turns}
+        return parse_anthropic_response(self._transport(self.url, payload))
+
+
+class OpenAIChat:
+    """Read-only operator chat via an OpenAI-compatible chat/completions endpoint. CLOUD — OPT-IN.
+
+    Works with OpenAI and any compatible API (set ``base_url``). Sends the dashboard snapshot to the
+    provider (data leaves the machine). Key held as a masked `Secret`, used only for the
+    Authorization header. Read-only, off the trading path (Inv 1/2)."""
+
+    def __init__(self, *, api_key, model: str = "gpt-4o-mini",
+                 base_url: str = "https://api.openai.com/v1", max_tokens: int = 1024,
+                 temperature: float = 0.2, transport: ChatTransport | None = None):
+        from src.core.secrets import Secret
+        self._key = api_key if isinstance(api_key, Secret) else Secret(str(api_key))
+        self.model = model
+        self.url = f"{base_url.rstrip('/')}/chat/completions"
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self._transport = transport or self._post
+
+    def _post(self, url: str, payload: dict) -> str:
+        return _http_post_headers(url, payload, {"Authorization": f"Bearer {self._key.reveal()}"})
+
+    def answer(self, question: str, snapshot: dict, history: object = None, *,
+               context_builder=build_context_summary) -> str:
+        payload = {
+            "model": self.model,
+            "messages": build_messages(question, snapshot, history, context_builder=context_builder),
+            "max_tokens": self.max_tokens, "temperature": self.temperature}
+        return parse_openai_response(self._transport(self.url, payload))
+
+
+def build_chat_client(provider: str = "ollama", *, model: str | None = None, api_key=None,
+                      host: str | None = None, base_url: str | None = None,
+                      transport: ChatTransport | None = None):
+    """Build the read-only chat backend for ``provider`` (default local Ollama — data never leaves).
+
+    Providers: ``ollama`` (local, default), ``anthropic`` (Claude Messages API), ``openai``
+    (OpenAI-compatible; ``base_url`` overrides the endpoint). Cloud providers REQUIRE an API key and
+    send the dashboard snapshot off-machine — the caller is responsible for warning the operator and
+    passing the key from a secret store, never a log. All backends stay read-only (Inv 1)."""
+    p = (provider or "ollama").lower()
+    if p == "ollama":
+        return OllamaChat(model=model or "llama3.1", host=host or _DEFAULT_HOST, transport=transport)
+    if p == "anthropic":
+        if not api_key:
+            raise ValueError("anthropic provider requires an API key (set ANTHROPIC_API_KEY)")
+        return AnthropicChat(api_key=api_key, model=model or "claude-opus-4-8",
+                             host=host or "https://api.anthropic.com", transport=transport)
+    if p in ("openai", "openai-compatible"):
+        if not api_key:
+            raise ValueError("openai provider requires an API key (set OPENAI_API_KEY)")
+        return OpenAIChat(api_key=api_key, model=model or "gpt-4o-mini",
+                          base_url=base_url or host or "https://api.openai.com/v1",
+                          transport=transport)
+    raise ValueError(f"unknown chat provider: {provider!r} (use ollama, anthropic, or openai)")
+
+
+def answer(question: str, snapshot: dict, *, client, history: object = None,
            context_builder=build_context_summary) -> dict:
     """Fail-soft entry point for the UI: returns ``{"answer", "error"}``. Never raises.
 

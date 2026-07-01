@@ -7,6 +7,7 @@ Ollama reply shapes, and the fail-soft entry point (a backend error never raises
 from __future__ import annotations
 
 import ast
+import json
 import pathlib
 
 import pytest
@@ -267,6 +268,67 @@ def test_answer_uses_injected_multi_pair_context_builder():
     assert out["error"] is None and "BTC/USDT" in out["answer"]
     # the multi-pair table (not the single-pair dashboard) was placed in the prompt
     assert "Available pairs" in sent["messages"][-1]["content"]
+
+
+def test_anthropic_backend_sends_system_separately_and_keeps_key_in_headers_only():
+    sent = {}
+
+    def transport(url, payload):
+        sent["url"] = url
+        sent["payload"] = payload
+        return '{"content": [{"type": "text", "text": "you are flat"}]}'
+
+    client = chat.AnthropicChat(api_key="sk-ant-SECRET", model="claude-opus-4-8", transport=transport)
+    out = client.answer("why flat?", _snapshot())
+    assert out == "you are flat"
+    assert sent["url"].endswith("/v1/messages")
+    assert sent["payload"]["model"] == "claude-opus-4-8"
+    assert "system" in sent["payload"] and sent["payload"]["messages"][-1]["role"] == "user"
+    # the API key must NEVER be in the request body (headers only)
+    assert "SECRET" not in json.dumps(sent["payload"])
+    # and it must be masked in the client's secret wrapper
+    assert str(client._key) == "***" and client._key.reveal() == "sk-ant-SECRET"
+
+
+def test_openai_backend_returns_choice_content():
+    def transport(url, payload):
+        assert url.endswith("/chat/completions")
+        return '{"choices": [{"message": {"content": "SOL did best"}}]}'
+
+    client = chat.OpenAIChat(api_key="sk-openai-x", transport=transport)
+    assert client.answer("which best?", _comparison(),
+                         context_builder=chat.build_multi_pair_summary) == "SOL did best"
+
+
+def test_provider_response_parsers_handle_errors():
+    assert chat.parse_anthropic_response('{"content":[{"type":"text","text":"hi"}]}') == "hi"
+    assert chat.parse_openai_response('{"choices":[{"message":{"content":"hi"}}]}') == "hi"
+    for bad in ('{"type":"error","error":{"message":"bad key"}}', "not json", '{"content":[]}'):
+        with pytest.raises(ValueError):
+            chat.parse_anthropic_response(bad)
+    with pytest.raises(ValueError):
+        chat.parse_openai_response('{"error":{"message":"bad key"}}')
+
+
+def test_build_chat_client_selects_provider_and_requires_key_for_cloud():
+    assert isinstance(chat.build_chat_client("ollama"), chat.OllamaChat)
+    assert isinstance(chat.build_chat_client("anthropic", api_key="k"), chat.AnthropicChat)
+    assert isinstance(chat.build_chat_client("openai", api_key="k"), chat.OpenAIChat)
+    with pytest.raises(ValueError):
+        chat.build_chat_client("anthropic")        # cloud provider needs a key
+    with pytest.raises(ValueError):
+        chat.build_chat_client("openai")
+    with pytest.raises(ValueError):
+        chat.build_chat_client("gemini")           # unknown provider
+
+
+def test_answer_fail_soft_works_with_any_backend():
+    def boom(url, payload):
+        raise ConnectionError("cloud down")
+
+    out = chat.answer("status?", _snapshot(),
+                      client=chat.AnthropicChat(api_key="k", transport=boom))
+    assert out["error"] == "cloud down" and "unavailable" in out["answer"]
 
 
 def test_chat_module_imports_nothing_from_the_order_path():

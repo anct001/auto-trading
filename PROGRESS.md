@@ -681,6 +681,23 @@ Reused the /replay comparison surface to compare *strategies* on a single coin (
   honest (no edge). HTTP smoke: /replay shows dimension=strategy, coin, rows by strategy. Suite
   **580→582**, ruff clean.
 
+### 2026-06-30 (session, cont.) — pluggable /chat backends (bring-your-own AI API key)
+The assistant was local-Ollama-only; added **opt-in cloud providers** while keeping local default:
+- `llm/chat.py` — `AnthropicChat` (Claude Messages API, `x-api-key` + `anthropic-version`, system
+  split out, model default `claude-opus-4-8`) and `OpenAIChat` (OpenAI-compatible chat/completions,
+  `Authorization: Bearer`, `base_url` override). Both use the **same stdlib-urllib + injectable
+  transport** pattern as `OllamaChat` (no new deps, offline-tested). `build_chat_client(provider,…)`
+  factory. `parse_anthropic_response`/`parse_openai_response`. +7 tests (incl. key-never-in-body).
+- **Secrets/privacy (Inv 6):** the API key is wrapped in `core.secrets.Secret` (repr/str masked to
+  `***`, revealed only for the auth header, never logged / never in the request body). Key comes
+  from the ENV only (`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`), never a CLI flag.
+- **Wiring:** `build_live_context`/`build_replay_context` take `chat_provider`/`chat_api_key`/
+  `chat_base_url`; `dry_run.py` `--chat-provider {ollama,anthropic,openai}` + `--chat-base-url`;
+  `_resolve_chat_config` pulls the key from env, prints a **privacy warning** that cloud sends the
+  dashboard snapshot off-machine, and **falls back to local Ollama** if the key is missing.
+- Still read-only (Inv 1) on every backend; default stays **local Ollama (data never leaves)**.
+  Suite **580→587**, ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

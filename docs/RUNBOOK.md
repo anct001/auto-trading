@@ -163,6 +163,13 @@ ollama pull llama3.1
   bitbank BTC/JPY → clear the gate with ≥1 net-of-cost+tax edge surviving the §5 correction.
 - **/chat assistant:** `--serve-ui` already wires it (`--chat-model llama3.1`). Read-only — it
   explains state, never trades.
+  - **Backend choice (`--chat-provider`):** `ollama` (default, **local, data never leaves**),
+    or opt-in **cloud** `anthropic` / `openai`. Cloud providers **send the dashboard snapshot
+    off-machine** and need an API key from the environment only (never a flag): `ANTHROPIC_API_KEY`
+    or `OPENAI_API_KEY`. `--chat-model` picks the model (per-provider default if left at `llama3.1`);
+    `--chat-base-url` targets any OpenAI-compatible endpoint. The key is held as a masked secret and
+    never logged; if it's missing the assistant falls back to local Ollama. Example:
+    `ANTHROPIC_API_KEY=sk-ant-… python -m src.dry_run --serve-ui --chat-provider anthropic`.
 
 ## 8. Config integrity (§15) — after any intentional config change
 

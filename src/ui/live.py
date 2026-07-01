@@ -23,14 +23,18 @@ from src.ui.server import OperatorContext
 
 def build_replay_context(
     comparison: dict, *, chat_model: str = "llama3.1", chat_host: str = "http://localhost:11434",
+    chat_provider: str = "ollama", chat_api_key=None, chat_base_url: str | None = None,
 ) -> OperatorContext:
     """An OperatorContext serving a completed MULTI-PAIR replay comparison + a read-only assistant
     scoped to it (analyse/look up across coins). No live loop, no writes — a static, read-only view
-    of finished replay results (Inv 1/2)."""
-    from src.llm.chat import OllamaChat, build_multi_pair_summary
+    of finished replay results (Inv 1/2). ``chat_provider`` selects the backend (local ``ollama``
+    default; ``anthropic``/``openai`` are opt-in cloud and send state off-machine)."""
+    from src.llm.chat import build_chat_client, build_multi_pair_summary
     from src.llm.chat import answer as _chat_answer
 
-    client = OllamaChat(model=chat_model, host=chat_host)
+    _host = chat_host if chat_provider == "ollama" else None  # cloud uses its own default host
+    client = build_chat_client(chat_provider, model=chat_model, api_key=chat_api_key,
+                               host=_host, base_url=chat_base_url)
 
     def _chat(body: dict) -> dict:
         return _chat_answer(str(body.get("question", "")), comparison, client=client,
@@ -51,23 +55,27 @@ _GOOD_EXCHANGE = {"spot_mode": True, "leverage": 1, "margin_disabled": True,
 
 def build_live_context(
     runner, *, chat_model: str = "llama3.1", chat_host: str = "http://localhost:11434",
+    chat_provider: str = "ollama", chat_api_key=None, chat_base_url: str | None = None,
     auth_token: str | None = None,
 ) -> OperatorContext:
     """Build an OperatorContext backed by a live ``DryRunner`` (see module docstring).
 
-    ``chat_model``/``chat_host`` configure the READ-ONLY operator assistant (Inv 1): it is given a
-    snapshot of the (already-redacted) dashboard payload and can only explain it. If Ollama is
-    down the chat endpoint returns a fail-soft 'unavailable' message — the dashboard and the
-    trading loop are unaffected (Inv 2). ``auth_token``, when set, requires a matching
-    X-Auth-Token header on the mutating writes (manual order, kill-switch) — the read surface stays
-    open (localhost assumption)."""
-    from src.llm.chat import OllamaChat
+    ``chat_provider``/``chat_model`` configure the READ-ONLY operator assistant (Inv 1): it is given
+    a snapshot of the (already-redacted) dashboard payload and can only explain it. Default is local
+    ``ollama`` (data never leaves); ``anthropic``/``openai`` are opt-in cloud backends that send the
+    snapshot off-machine and need an API key. If the backend is down the chat endpoint returns a
+    fail-soft 'unavailable' message — the dashboard and the trading loop are unaffected (Inv 2).
+    ``auth_token``, when set, requires a matching X-Auth-Token header on the mutating writes (manual
+    order, kill-switch) — the read surface stays open (localhost assumption)."""
+    from src.llm.chat import build_chat_client
     from src.llm.chat import answer as _chat_answer
     from src.risk import engine
 
     cfg = runner.loop.cfg
     market = runner.loop.market
-    chat_client = OllamaChat(model=chat_model, host=chat_host)
+    _host = chat_host if chat_provider == "ollama" else None  # cloud uses its own default host
+    chat_client = build_chat_client(chat_provider, model=chat_model, api_key=chat_api_key,
+                                    host=_host, base_url=chat_base_url)
 
     def _dashboard() -> dict:
         from src.ui.performance import performance_summary

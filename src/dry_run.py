@@ -419,6 +419,38 @@ def build_runner(*, data_exchange, paper_exchange, events: EventLog, strategy, c
                      prewarm=prewarm)
 
 
+def _resolve_chat_config(args) -> dict:
+    """Resolve the /chat assistant backend from CLI + env into build_*_context kwargs.
+
+    Default is local Ollama (data never leaves). For a CLOUD provider the API key comes ONLY from
+    the environment (never a flag → never in shell history / process list), wrapped as a masked
+    Secret; a clear privacy warning is printed. If the key is missing the provider falls back to
+    local Ollama so the UI still runs."""
+    import os
+
+    provider = getattr(args, "chat_provider", "ollama")
+    model = args.chat_model
+    if provider == "ollama":
+        return {"chat_provider": "ollama", "chat_model": model, "chat_api_key": None,
+                "chat_base_url": None}
+
+    from src.core.secrets import load_optional
+    env_name = "ANTHROPIC_API_KEY" if provider == "anthropic" else "OPENAI_API_KEY"
+    key = load_optional(env_name, env=os.environ)
+    if model == "llama3.1":  # the Ollama default → let the provider pick its own default model
+        model = None
+    if key is None:
+        print(f"[dry-run] ⚠ chat provider '{provider}' selected but {env_name} is not set — "
+              f"falling back to LOCAL ollama for /chat.")
+        return {"chat_provider": "ollama", "chat_model": args.chat_model, "chat_api_key": None,
+                "chat_base_url": None}
+    print(f"[dry-run] ⚠ /chat uses CLOUD provider '{provider}' (key from {env_name}): the "
+          f"dashboard snapshot (equity, positions, decisions) is SENT to the provider. "
+          f"Read-only — it still cannot trade (Inv 1).")
+    return {"chat_provider": provider, "chat_model": model, "chat_api_key": key,
+            "chat_base_url": args.chat_base_url}
+
+
 def main(argv: list[str] | None = None) -> None:
     import ccxt
 
@@ -458,7 +490,14 @@ def main(argv: list[str] | None = None) -> None:
                    help="serve the read-only operator dashboard over the live paper state")
     p.add_argument("--ui-port", type=int, default=8787)
     p.add_argument("--chat-model", default="llama3.1",
-                   help="Ollama model for the read-only operator assistant (/chat); off the trading path")
+                   help="model for the /chat assistant (Ollama default llama3.1; per-provider "
+                        "default used automatically for cloud providers)")
+    p.add_argument("--chat-provider", default="ollama", choices=["ollama", "anthropic", "openai"],
+                   help="AI backend for /chat. ollama = LOCAL (default; data never leaves). "
+                        "anthropic/openai are CLOUD (send dashboard state off-machine; key from "
+                        "ANTHROPIC_API_KEY / OPENAI_API_KEY env, never a flag)")
+    p.add_argument("--chat-base-url", default=None,
+                   help="override the base URL for the openai provider (OpenAI-compatible endpoints)")
     p.add_argument("--ui-token", default=None,
                    help="require this X-Auth-Token on UI writes (order/kill-switch); "
                         "defaults to env UI_AUTH_TOKEN. Unset = open (localhost only)")
@@ -483,6 +522,8 @@ def main(argv: list[str] | None = None) -> None:
     print(f"[dry-run] PAPER mode — no real capital. data={args.data_exchange} pair={args.pair} "
           f"tf={args.timeframe} equity={args.equity}")
 
+    chat_cfg = _resolve_chat_config(args)  # provider/model/api_key/base_url for the /chat assistant
+
     # operator alerting: log every alert to the event store + print; optional webhook (§12/§15)
     from src.ops.alerts import Alerter, event_log_sink, print_sink, webhook_sink
     sinks = [print_sink, event_log_sink(runner.loop.events)]
@@ -497,7 +538,7 @@ def main(argv: list[str] | None = None) -> None:
         from src.ui.live import build_live_context
         from src.ui.server import serve
         ui_token = args.ui_token or os.environ.get("UI_AUTH_TOKEN")
-        ctx = build_live_context(runner, chat_model=args.chat_model, auth_token=ui_token)
+        ctx = build_live_context(runner, auth_token=ui_token, **chat_cfg)
         threading.Thread(target=serve, args=(ctx,), kwargs={"port": args.ui_port},
                          daemon=True).start()
         print(f"[dry-run] operator dashboard (read-only) on http://127.0.0.1:{args.ui_port}/ "
@@ -518,7 +559,7 @@ def main(argv: list[str] | None = None) -> None:
 
             from src.ui.live import build_replay_context
             from src.ui.server import serve
-            rctx = build_replay_context(comparison, chat_model=args.chat_model)
+            rctx = build_replay_context(comparison, **chat_cfg)
             threading.Thread(target=serve, args=(rctx,), kwargs={"port": args.ui_port},
                              daemon=True).start()
             print(f"[dry-run] strategy-comparison dashboard on "
@@ -545,7 +586,7 @@ def main(argv: list[str] | None = None) -> None:
 
             from src.ui.live import build_replay_context
             from src.ui.server import serve
-            rctx = build_replay_context(comparison, chat_model=args.chat_model)
+            rctx = build_replay_context(comparison, **chat_cfg)
             threading.Thread(target=serve, args=(rctx,), kwargs={"port": args.ui_port},
                              daemon=True).start()
             print(f"[dry-run] replay dashboard on http://127.0.0.1:{args.ui_port}/replay "
