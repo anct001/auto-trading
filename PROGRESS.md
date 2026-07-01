@@ -607,6 +607,22 @@ Extended replay to use the coin's **real** past data, repeatably:
   (correct, invariant-safe), surfaced faithfully by replay — not a replay bug. Suite **561→562**,
   ruff clean.
 
+### 2026-06-30 (session, cont.) — sizing: opt-in per-asset clamp (money code, TDD)
+Resolved the long-standing design note (inverse-ATR sizing proposing >25% per-asset → every live
+entry futilely rejected as `per_asset_cap`). TDD, money code, invariant-safe:
+- `risk/sizing.compute_size(..., clamp_per_asset=False)` — when on, caps the notional to the
+  per-asset headroom (`per_asset_cap_pct` − existing position value in the pair), matching
+  `limits.check_per_asset` exactly. **Strictly tightening** (size only shrinks; the engine still
+  disposes). No headroom → SKIP with `per_asset_cap` (never a forced trade). **Default off → the P0
+  backtest path is byte-for-byte unchanged** (same opt-in pattern as `size_multiplier`).
+- `fast_loop._enter` opts in (`clamp_per_asset=True`) so the **live loop / dry-run / replay** size
+  feasibly instead of being rejected. Fast-loop tests already keep size under the cap → unchanged.
+- +6 sizing tests (clamp limits notional to cap, accounts for existing exposure, SKIP at cap,
+  never-grows-when-under-cap, engine-accepts-the-clamped-order, opt-in default preserves Kelly).
+- **Verified on REAL data:** re-ran the replay on the saved 1079 real kucoin BTC/USDT candles —
+  now **9 closed trades, 18 RiskPassed, 0 rejections** (was 0 trades / 9 `per_asset_cap` rejects);
+  realized_pnl ~breakeven (EMA-cross has no edge — honest). Suite **562→568**, ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

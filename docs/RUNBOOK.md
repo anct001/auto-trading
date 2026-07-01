@@ -94,9 +94,10 @@ ticks / closed trades / final equity / return and writes the event log. It is a 
 *pipeline*, not an edge claim — dry-run fills are optimistic (§2) and the EMA-cross has no edge; for
 a statistically honest read use the backtest + DSR tooling (step 4), not replay P&L.
 
-> Note: with the default risk config, inverse-ATR sizing often proposes more than the 25% per-asset
-> cap, so the engine *correctly* rejects those entries (`per_asset_cap`) and a replay can show 0
-> trades — sizing proposes, the engine disposes (a documented design note, not a bug).
+> Note: the live loop sizes with `clamp_per_asset=True`, so inverse-ATR sizing is capped to the 25%
+> per-asset headroom and entries land feasibly (no more futile `per_asset_cap` rejections). The
+> clamp is strictly tightening — the engine still disposes. (`compute_size` defaults the clamp off,
+> so the P0 backtest path is unchanged.)
 
 ## 5. The ≥30-day forward dry-run (P3 gate)
 

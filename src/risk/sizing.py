@@ -75,6 +75,7 @@ def compute_size(
     market: MarketConstraints,
     atr_stop_mult: float = 2.0,
     size_multiplier: float = 1.0,
+    clamp_per_asset: bool = False,
 ) -> SizingResult:
     """Size a new long entry for ``pair`` at ``price``. See module docstring for the model.
 
@@ -83,6 +84,13 @@ def compute_size(
     1.0 so the LLM can never grow a position (Inv. 1/3); a non-positive value is rejected
     (fail-closed). The default 1.0 leaves the deterministic sizing untouched (P0 path). The
     backtest never passes this (the LLM feature is forward-validated only — no look-ahead, §6).
+
+    ``clamp_per_asset`` (opt-in, default off → P0 path byte-for-byte unchanged) additionally caps
+    the notional so this asset's exposure cannot exceed the engine's per-asset cap
+    (``per_asset_cap_pct``), accounting for any existing position in the pair. This is strictly
+    *tightening* (the size only ever shrinks) — the engine (R6) still disposes; it just avoids
+    proposing an over-cap size the engine would only reject (``per_asset_cap``). The live loop
+    turns it on so an entry lands feasibly instead of being futilely rejected.
     """
     if price <= 0:
         return SizingResult(feasible=False, reason="invalid_price", pair=pair)
@@ -100,6 +108,17 @@ def compute_size(
     # fractional-Kelly cap: a single bet may not deploy more than this fraction of equity
     max_qty = (cfg.max_fractional_kelly * state.equity) / price
     capped_qty = min(raw_qty, max_qty)
+
+    # optional per-asset exposure clamp (tighten-only): keep this asset's total exposure within the
+    # engine's per-asset cap so the proposal is feasible rather than futilely rejected (R6 still
+    # disposes). Uses this pair's price + existing position — matches limits.check_per_asset exactly.
+    if clamp_per_asset:
+        existing = state.positions.get(pair)
+        existing_value = existing.value(price) if existing else 0.0
+        headroom = cfg.per_asset_cap_pct / 100.0 * state.equity - existing_value
+        if headroom <= 0:
+            return SizingResult(feasible=False, reason="per_asset_cap", pair=pair)
+        capped_qty = min(capped_qty, headroom / price)
 
     price_r = floor_to_step(price, market.tick_size)
     qty_r = floor_to_step(capped_qty, market.lot_step)
