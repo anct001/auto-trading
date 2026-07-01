@@ -103,6 +103,28 @@ def test_replay_steps_through_history_and_trades(tmp_path):
     assert len(runner.trades()) >= 1                  # a full round-trip completed
 
 
+def test_replay_from_stored_real_history_roundtrips(tmp_path):
+    # simulate "fetch real data once, save, replay offline later": store -> read -> ReplayFeed
+    from src.data import store
+    src_df = pd.DataFrame({
+        "timestamp": pd.to_datetime([i * HOUR_MS for i in range(80)], unit="ms", utc=True),
+        "open": [10000 + i * 5 for i in range(80)], "high": [10100 + i * 5 for i in range(80)],
+        "low": [9900 + i * 5 for i in range(80)], "close": [10000 + i * 5 for i in range(80)],
+        "volume": [10.0] * 80})
+    path = tmp_path / "hist.parquet"
+    store.write_ohlcv(src_df, path)
+    loaded = store.read_ohlcv(path)                       # canonical stored frame
+    runner = build_runner(
+        data_exchange=ReplayFeed.from_frame(loaded), paper_exchange=PaperBrokerExchange(),
+        events=EventLog(str(tmp_path / "ev.jsonl")),
+        strategy=_ScriptStrategy(enter_before_ts=50 * HOUR_MS, exit_after_ts=70 * HOUR_MS),
+        cfg=_cfg(), costs=_COSTS, market=_MARKET, account=PaperAccount(cash=10_000.0),
+        pair=PAIR, timeframe="1h", atr_period=3)
+    health = runner.replay(warmup=40)
+    assert health["tick_count"] == 40                     # replayed the stored real history
+    assert len(runner.trades()) >= 1
+
+
 def test_replay_is_causal_result_independent_of_future_bars(tmp_path):
     # replaying only the first K bars must give the SAME per-tick equity as the full replay's first K
     def run(n_bars):

@@ -431,6 +431,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--replay-days", type=int, default=0,
                    help="replay N days of PAST data through the paper loop, then stop "
                         "(0 = normal live-poll mode). No sleeping; same order path as live.")
+    p.add_argument("--replay-file", default=None,
+                   help="replay from a stored OHLCV file (.parquet/.csv) of REAL past data instead "
+                        "of fetching — offline & repeatable. Overrides --replay-days.")
+    p.add_argument("--save-history", default=None,
+                   help="with --replay-days, also save the fetched REAL history to this .parquet "
+                        "so it can be replayed later with --replay-file (reproducible).")
     p.add_argument("--poll-seconds", type=float, default=60.0)
     p.add_argument("--events", default="events/dry_run.jsonl")
     p.add_argument("--sentiment-state", default=None,
@@ -485,15 +491,10 @@ def main(argv: list[str] | None = None) -> None:
               f"(assistant at /chat, model {args.chat_model}; "
               f"writes {'TOKEN-PROTECTED' if ui_token else 'open — localhost only'})")
 
-    if args.replay_days > 0:
-        now = data_ex.milliseconds()
-        since = now - args.replay_days * 86_400_000
-        print(f"[dry-run] REPLAY: fetching {args.replay_days}d of {args.pair} {args.timeframe} "
-              f"history from {args.data_exchange} ...")
-        hist = feed.fetch_ohlcv_history(data_ex, args.pair, args.timeframe,
-                                        since_ms=since, page_limit=720, now_ms=now)
-        print(f"[dry-run] REPLAY: {len(hist)} candles — stepping the paper loop over the past "
-              f"(no real capital) ...")
+    if args.replay_file or args.replay_days > 0:
+        hist = _load_replay_history(args, data_ex)
+        print(f"[dry-run] REPLAY: {len(hist)} REAL {args.pair} {args.timeframe} candles — stepping "
+              f"the paper loop over the past (no real capital) ...")
         runner.data_exchange = ReplayFeed.from_frame(hist)
         h = runner.replay(progress_every=max(1, len(hist) // 10))
         eq = runner.account.equity(runner.marks())
@@ -509,6 +510,32 @@ def main(argv: list[str] | None = None) -> None:
 
     runner.run(iterations=None if args.iterations == 0 else args.iterations,
                poll_seconds=args.poll_seconds)
+
+
+def _load_replay_history(args, data_ex):
+    """Get the REAL historical OHLCV to replay: from a stored file (offline/repeatable) or by
+    fetching ``--replay-days`` from the venue (optionally saving it for reuse)."""
+    import pandas as pd
+
+    from src.data import store
+    if args.replay_file:
+        if str(args.replay_file).endswith(".csv"):
+            hist = pd.read_csv(args.replay_file, parse_dates=["timestamp"])
+        else:
+            hist = store.read_ohlcv(args.replay_file)
+        print(f"[dry-run] REPLAY from file {args.replay_file}")
+        return hist
+    now = data_ex.milliseconds()
+    since = now - args.replay_days * 86_400_000
+    print(f"[dry-run] REPLAY: fetching {args.replay_days}d of {args.pair} {args.timeframe} "
+          f"history from {args.data_exchange} ...")
+    hist = feed.fetch_ohlcv_history(data_ex, args.pair, args.timeframe,
+                                    since_ms=since, page_limit=720, now_ms=now)
+    if args.save_history:
+        store.write_ohlcv(hist, args.save_history)
+        print(f"[dry-run] saved {len(hist)} candles -> {args.save_history} (replay later with "
+              f"--replay-file)")
+    return hist
 
 
 if __name__ == "__main__":

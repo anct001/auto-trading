@@ -594,6 +594,19 @@ Added a way to run the paper dry-run over **historical** data (not just the live
   independent of future bars**). Offline e2e demo ran 150 ticks over synthetic history. RUNBOOK
   §4b documents it as a same-day smoke before the ≥30-day forward run. Suite **557→561**, ruff clean.
 
+### 2026-06-30 (session, cont.) — replay from REAL stored history (fetch-once / replay-offline)
+Extended replay to use the coin's **real** past data, repeatably:
+- CLI `--replay-file <.parquet/.csv>` (replay stored real OHLCV, no network) and `--save-history
+  <.parquet>` (with `--replay-days`, save the fetched real history via `data.store` for reuse).
+  `_load_replay_history` picks file-vs-fetch. +1 test (store round-trip → ReplayFeed → replay).
+- **Demonstrated on REAL data here:** cloud env reaches kraken/coinbase/kucoin/okx/gemini (only
+  bitbank/bybit/binance are geo-blocked). Fetched **1079 real kucoin BTC/USDT 1h candles (45d)**,
+  saved to parquet, replayed offline from the file — identical, reproducible. Event breakdown: 829
+  MarketReceived+SignalGenerated, 9 enter_long, all 9 **rejected by the engine as `per_asset_cap`**
+  → 0 trades. That is the documented "sizing proposes >25% per-asset, engine disposes" design note
+  (correct, invariant-safe), surfaced faithfully by replay — not a replay bug. Suite **561→562**,
+  ruff clean.
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

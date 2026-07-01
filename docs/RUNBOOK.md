@@ -78,14 +78,25 @@ the exact live order path, just stepping a synthetic clock over history — caus
 only candles closed by that step), no sleeping, no real capital.
 
 ```bash
+# fetch REAL past data of the coin and replay it (add --serve-ui to browse the result after):
 python -m src.dry_run --data-exchange bybit --pair BTC/USDT --timeframe 1h \
     --replay-days 365 --equity 10000
-# add --serve-ui to browse the result on the dashboard afterwards (Ctrl-C to exit)
+
+# fetch once + SAVE, so you can replay the same real history later — offline & reproducible:
+python -m src.dry_run --data-exchange kucoin --pair BTC/USDT --timeframe 1h \
+    --replay-days 365 --save-history data/btc_usdt_1h.parquet
+python -m src.dry_run --pair BTC/USDT --timeframe 1h \
+    --replay-file data/btc_usdt_1h.parquet          # no network; identical every run
 ```
 
-Prints ticks / closed trades / final equity / return and writes the event log. This is a smoke of
-the *pipeline*, not an edge claim — dry-run fills are optimistic (§2), and the EMA-cross has no edge.
-For a statistically honest read use the backtest + DSR tooling (step 4), not replay P&L.
+Uses the coin's **real** OHLCV (from `--data-exchange`, or a stored `.parquet`/`.csv`). Prints
+ticks / closed trades / final equity / return and writes the event log. It is a smoke of the
+*pipeline*, not an edge claim — dry-run fills are optimistic (§2) and the EMA-cross has no edge; for
+a statistically honest read use the backtest + DSR tooling (step 4), not replay P&L.
+
+> Note: with the default risk config, inverse-ATR sizing often proposes more than the 25% per-asset
+> cap, so the engine *correctly* rejects those entries (`per_asset_cap`) and a replay can show 0
+> trades — sizing proposes, the engine disposes (a documented design note, not a bug).
 
 ## 5. The ≥30-day forward dry-run (P3 gate)
 
