@@ -543,6 +543,9 @@ class DryRunner:
         warm = self._buffer_cap if warmup is None else warmup
         warm = min(max(warm, 0), len(rows))
         total = len(rows)
+        # the UI ring-buffer cap must never truncate a replay: the comparison metrics
+        # (MaxDD/Sharpe/VaR/exposure) are computed from this history over the FULL period
+        self._equity_cap = max(self._equity_cap, (total - warm) + 8)
         for idx in range(warm, total):
             t = int(rows[idx][0]) + step  # wall-clock just after this candle closes
             self.data_exchange.set_now(t)

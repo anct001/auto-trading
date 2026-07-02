@@ -125,6 +125,20 @@ def test_replay_from_stored_real_history_roundtrips(tmp_path):
     assert len(runner.trades()) >= 1
 
 
+def test_replay_keeps_the_FULL_equity_history_for_metrics(tmp_path):
+    # audit fix #4: the UI cap (1000 points) must not truncate a long replay — otherwise
+    # MaxDD/Sharpe/VaR/exposure were computed on the tail while Return covered the whole period
+    runner = build_runner(
+        data_exchange=ReplayFeed(_history(120)), paper_exchange=PaperBrokerExchange(),
+        events=EventLog(str(tmp_path / "ev.jsonl")),
+        strategy=_ScriptStrategy(enter_before_ts=50 * HOUR_MS, exit_after_ts=70 * HOUR_MS),
+        cfg=_cfg(), costs=_COSTS, market=_MARKET, account=PaperAccount(cash=10_000.0),
+        pair=PAIR, timeframe="1h", atr_period=3)
+    runner._equity_cap = 50                                # simulate a replay longer than the cap
+    runner.replay(warmup=40)                               # 80 bars processed
+    assert len(runner.equity_history()) >= 80              # nothing truncated
+
+
 def test_replay_is_causal_result_independent_of_future_bars(tmp_path):
     # replaying only the first K bars must give the SAME per-tick equity as the full replay's first K
     def run(n_bars):
