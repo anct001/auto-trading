@@ -27,6 +27,7 @@ from src.events.log import (
     DAY_ROLLED,
     FILL_RECEIVED,
     ORDER_SUBMITTED,
+    STOP_TRIGGERED,
     EventLog,
     log_risk_decision,
 )
@@ -44,18 +45,26 @@ _GOOD_EXCHANGE = {"spot_mode": True, "leverage": 1, "margin_disabled": True,
 
 class PaperBrokerExchange:
     """A simulated exchange for ORDERS only (never real). Entries fill fully at the order price;
-    reduceOnly stops are recorded as resting (they trigger only if price hits them, not modeled
-    in this signal-focused dry-run)."""
+    reduceOnly protective stops REST here and are triggered by the runner's per-candle sweep
+    (`DryRunner._check_protective_stops`) when a candle's low crosses the stop — so the paper
+    loop and replay carry the same downside protection the backtest enforces (§4)."""
 
     def __init__(self):
         self.orders: list[dict] = []
+        self.resting_stops: dict[str, dict] = {}  # clientOrderId -> {symbol, stopPrice, amount}
 
     def create_order(self, symbol, type, side, amount, price, params):
         self.orders.append({"symbol": symbol, "type": type, "side": side, "amount": amount,
                             "price": price, "params": dict(params)})
         is_stop = bool(params.get("reduceOnly"))
+        order_id = f"paper-{len(self.orders)}"
+        if is_stop:
+            cid = str(params.get("clientOrderId") or order_id)
+            self.resting_stops[cid] = {"symbol": symbol, "amount": float(amount),
+                                       "stopPrice": float(params.get("stopPrice", price)),
+                                       "id": order_id}
         return {
-            "id": f"paper-{len(self.orders)}",
+            "id": order_id,
             "status": "open" if is_stop else "closed",
             "filled": 0.0 if is_stop else amount,
             "amount": amount,
@@ -181,7 +190,8 @@ class DryRunner:
     def __init__(self, *, data_exchange, loop: FastLoop, account: PaperAccount, costs: Costs,
                  pair: str, timeframe: str, limit: int = 200,
                  killswitch: KillSwitch | None = None, prewarm: bool = True,
-                 checkpoint_path: str | None = None):
+                 checkpoint_path: str | None = None, paper_exchange=None):
+        self.paper_exchange = paper_exchange  # for the protective-stop sweep (None = no simulation)
         self.data_exchange = data_exchange
         self.loop = loop
         self.account = account
@@ -367,6 +377,10 @@ class DryRunner:
         last_close = float(df["close"].iloc[-1])
         self.last_prices[self.pair] = last_close
 
+        # protective-stop sweep (§4): the candle that just closed may have pierced a resting stop
+        # placed on an earlier tick — fill it BEFORE this tick's decision (it happened intra-candle)
+        self._check_protective_stops(float(df["open"].iloc[-1]), float(df["low"].iloc[-1]))
+
         # daily-limit rollover (§4): anchor "today" to the UTC day of the decision clock — the
         # wall clock live, or the synthetic clock in replay (so replays roll historical days too)
         wall_ms = int(now_ms) if now_ms is not None else int(time.time() * 1000)
@@ -398,6 +412,39 @@ class DryRunner:
             self._last_tick_at = datetime.now(timezone.utc).isoformat()
             self._record_equity()  # mark-to-market each tick for the UI equity curve
         return result
+
+    def _check_protective_stops(self, candle_open: float, candle_low: float) -> None:
+        """Fill any resting reduceOnly stop the last candle pierced (paper realism, §4).
+
+        Long stop-loss: triggers when the candle's low reaches the stop. Fill price is the stop
+        itself, or the OPEN when the bar gapped through (open below stop) — mirroring the same
+        gap semantics the backtest enforces (audit #3). A stop whose position is already flat
+        (closed by a strategy exit or a manual sell) is cancelled, never fired."""
+        paper = self.paper_exchange
+        stops = getattr(paper, "resting_stops", None)
+        if not stops:
+            return
+        for cid, stp in list(stops.items()):
+            pair = stp["symbol"]
+            pos = self.account.positions.get(pair)
+            if pos is None or pos.qty <= 0:
+                del stops[cid]                       # reduceOnly with nothing to reduce → cancel
+                continue
+            stop_px = float(stp["stopPrice"])
+            if candle_low > stop_px:
+                continue                             # untouched this candle
+            gapped = candle_open <= stop_px
+            fill = candle_open if gapped else stop_px
+            qty = min(float(stp["amount"]), pos.qty)
+            with self._lock:
+                self._record_close(pair, qty, fill)
+                self.account.apply_sell(pair, qty, fill, self.costs.taker_fee)
+                self._record_equity()
+            self.loop.events.append(STOP_TRIGGERED, {
+                "pair": pair, "qty": qty, "stop_price": stop_px, "fill_price": fill,
+                "gapped": gapped, "client_order_id": cid})
+            self.loop.events.append(FILL_RECEIVED, {"pair": pair, "filled": qty})
+            del stops[cid]
 
     def marks(self) -> dict[str, float]:
         """Current marks for every held pair: last closed price, falling back to entry price."""
@@ -529,7 +576,8 @@ def build_runner(*, data_exchange, paper_exchange, events: EventLog, strategy, c
     )
     return DryRunner(data_exchange=data_exchange, loop=loop, account=account, costs=costs,
                      pair=pair, timeframe=timeframe, limit=limit, killswitch=killswitch,
-                     prewarm=prewarm, checkpoint_path=checkpoint_path)
+                     prewarm=prewarm, checkpoint_path=checkpoint_path,
+                     paper_exchange=paper_exchange)
 
 
 def _resolve_chat_config(args) -> dict:
