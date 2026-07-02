@@ -100,7 +100,22 @@ def _with_nav(html: str, active: str = "") -> str:
 # non-operator from reaching the *dangerous* writes if the surface is ever exposed off localhost.
 _PROTECTED_WRITES = frozenset({
     "/api/order", "/api/killswitch/engage", "/api/killswitch/rearm",
+    "/api/chat",  # read-only, but a cloud provider call burns the operator's API credits
 })
+
+
+def _same_site(headers: dict | None) -> bool:
+    """CSRF guard: browsers attach an Origin header to POSTs. A cross-site page cannot read our
+    responses, but it CAN fire state-changing requests — so any POST whose Origin is not this
+    localhost UI is rejected. Non-browser clients (curl, tests, scripts) send no Origin → allowed."""
+    if not headers:
+        return True
+    origin = headers.get("Origin") or headers.get("origin")
+    if not origin:
+        return True
+    from urllib.parse import urlsplit
+    host = (urlsplit(origin).hostname or "").lower()
+    return host in ("127.0.0.1", "localhost", "::1")
 
 
 def _auth_ok(path: str, ctx: OperatorContext, headers: dict | None) -> bool:
@@ -126,6 +141,9 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
     parts = urlsplit(path)
     query = parse_qs(parts.query)
     path = parts.path.rstrip("/") or "/"
+
+    if method == "POST" and not _same_site(headers):
+        return Response(403, {"error": "cross-site request rejected"})
 
     if not _auth_ok(path, ctx, headers):
         return Response(401, {"error": "missing or invalid auth token"})
@@ -854,6 +872,7 @@ def chat_html() -> str:
 <form id="f"><input id="q" placeholder="Ask about equity, positions, why we're flat, the last rejection…" autocomplete="off">
  <button id="send">Ask</button></form>
 <script>
+window.fetch=((of)=>async(u,o)=>{o=o||{};if((o.method||"GET").toUpperCase()==="POST"){o.headers=Object.assign({},o.headers,{"X-Auth-Token":localStorage.getItem("uitoken")||""});}let r=await of(u,o);if(r.status===401){const t=prompt("Operator auth token for writes:");if(t){localStorage.setItem("uitoken",t);o.headers=Object.assign({},o.headers,{"X-Auth-Token":t});r=await of(u,o);}}return r;})(window.fetch);
 const log=document.getElementById("log"),q=document.getElementById("q"),send=document.getElementById("send");
 const prov=document.getElementById("prov");
 async function loadProviders(){try{const d=await (await fetch("/api/chat/providers")).json();
@@ -951,6 +970,7 @@ def replay_html() -> str:
  </div>
 </div>
 <script>
+window.fetch=((of)=>async(u,o)=>{o=o||{};if((o.method||"GET").toUpperCase()==="POST"){o.headers=Object.assign({},o.headers,{"X-Auth-Token":localStorage.getItem("uitoken")||""});}let r=await of(u,o);if(r.status===401){const t=prompt("Operator auth token for writes:");if(t){localStorage.setItem("uitoken",t);o.headers=Object.assign({},o.headers,{"X-Auth-Token":t});r=await of(u,o);}}return r;})(window.fetch);
 let DATA=null, SORT={k:"total_return",dir:-1}, SEL=null, hist=[];
 const pct=(x)=>(x==null?"—":((x*100).toFixed(2)+"%")), pf=(x)=>x==null?"∞":(typeof x==="number"?x.toFixed(2):"—");
 const cls=(x)=>x>=0?"ok":"bad";

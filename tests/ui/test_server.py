@@ -92,10 +92,38 @@ def test_auth_token_gates_mutating_writes_only():
     assert handle_request("POST", "/api/order", {}, ctx, {"X-Auth-Token": "s3cr3t"}).status == 200
     assert handle_request("POST", "/api/killswitch/engage", None, ctx,
                           {"x-auth-token": "s3cr3t"}).status == 200  # header case-insensitive
-    # read endpoints + read-only POSTs stay open without a token
+    # read endpoints + the preview stay open without a token
     assert handle_request("GET", "/api/dashboard", None, ctx).status == 200
     assert handle_request("POST", "/api/preview", {}, ctx).status == 200
-    assert handle_request("POST", "/api/chat", {"question": "hi"}, ctx).status == 200
+    # chat joined the protected writes (cloud credit burn — audit #7)
+    assert handle_request("POST", "/api/chat", {"question": "hi"}, ctx).status == 401
+
+
+def test_cross_site_post_is_rejected_by_origin_check():
+    # CSRF hardening (audit #7): a browser POST from a foreign site carries its Origin — reject it
+    ks = KillSwitch()
+    ctx = OperatorContext(dashboard=lambda: {}, preview=lambda b: {}, killswitch=ks,
+                          place=lambda b: {"placed": True}, chat=lambda b: {"answer": "hi"})
+    for path, body in (("/api/order", {}), ("/api/killswitch/engage", None),
+                       ("/api/chat", {"question": "hi"}), ("/api/preview", {})):
+        r = handle_request("POST", path, body, ctx, {"Origin": "https://evil.example"})
+        assert r.status == 403, path
+    # our own pages (localhost origin) and non-browser clients (no Origin) still work
+    assert handle_request("POST", "/api/order", {}, ctx,
+                          {"Origin": "http://127.0.0.1:8787"}).status == 200
+    assert handle_request("POST", "/api/order", {}, ctx,
+                          {"Origin": "http://localhost:8787"}).status == 200
+    assert handle_request("POST", "/api/order", {}, ctx).status == 200
+
+
+def test_chat_is_token_protected_when_token_configured():
+    # audit #7: /api/chat can burn cloud API credits — it joins the protected writes
+    ks = KillSwitch()
+    ctx = OperatorContext(dashboard=lambda: {}, preview=lambda b: {}, killswitch=ks,
+                          chat=lambda b: {"answer": "hi"}, auth_token="s3cr3t")
+    assert handle_request("POST", "/api/chat", {"question": "x"}, ctx).status == 401
+    assert handle_request("POST", "/api/chat", {"question": "x"}, ctx,
+                          {"X-Auth-Token": "s3cr3t"}).status == 200
 
 
 def test_no_auth_token_configured_leaves_writes_open():

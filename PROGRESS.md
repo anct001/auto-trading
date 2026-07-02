@@ -750,6 +750,35 @@ Completed the full polish roadmap in order:
    yet — every signal, risk verdict and order is logged here each tick") instead of "no events"/"—".
 Suite **593→603**, ruff clean. Screenshots refreshed (status/dashboard/help/chat).
 
+### 2026-07-02 (session) — audit-fix wave (10 findings, fixed in order)
+Re-analysis of the whole project produced 10 verified findings; fixing sequentially, one commit
+per fix group, TDD where money-adjacent:
+1. **+2. Daily rollover + checkpoint/resume** — `PaperAccount.roll_day` re-anchors
+   `day_start_equity` at each UTC midnight (day-loss limit was permanently anchored to launch
+   day); `DryRunner` checkpoints paper state atomically every tick
+   (`state/dry_run.checkpoint.json`, `--checkpoint`, auto-resume, corrupt→fail-soft) so a restart
+   no longer wipes positions/PnL. `DAY_ROLLED` event. +10 tests (suite 603→613... roll across
+   midnights proven in replay).
+3. **Protective stops simulated** — the paper loop registered reduceOnly stops but never filled
+   them; `_check_protective_stops` now sweeps resting stops against each candle's low BEFORE the
+   decision (gap-through fills at open, else at stop; stale stops cancelled; loss realized into
+   the day-loss/kill-switch path). `STOP_TRIGGERED` event. +5 tests.
+4. **Replay metrics on full history** — `replay()` capped `equity_history` at 5k points, so
+   Sharpe/MaxDD/VaR on long replays silently dropped the oldest data; the cap now grows with the
+   dataset. +1 test (suite →614).
+5. **+6. Config-driven loop + real market metadata + repo-root anchoring** — the CLI hard-coded
+   EMA 20/50 (drifting from the hash-locked `config/strategy/ema_cross.json` — now loaded via
+   `EmaCross.from_config`), hand-typed market constraints (now resolved from ccxt metadata via
+   `data/market_meta.py`, TICK_SIZE vs DECIMAL_PLACES handled, fail-soft to fallback with a
+   printed reason), and cwd-relative paths that broke the installed `autotrader` command run
+   from anywhere (`core/paths.repo_root()`: env override → marker walk-up → package parent).
+   +8 tests (suite →622); `autotrader --help` proven from a foreign cwd.
+7. **UI: cross-site POSTs rejected + `/api/chat` token-gated** — browsers attach `Origin` to
+   POSTs, so a malicious page could fire writes at `127.0.0.1:8080` (CSRF); non-localhost
+   Origin now → 403 (no-Origin curl/tests unaffected). `/api/chat` joined `_PROTECTED_WRITES`
+   (a cloud-provider call burns the operator's API credits). Token fetch-wrapper installed on
+   the chat + replay pages too. +2 tests (suite →624).
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.
