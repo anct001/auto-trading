@@ -731,6 +731,25 @@ Package of UX/professionalism work (no trading-logic changes):
   demo server), 2-line "new here?" on-ramp.
 - +2 tests (help/favicon; every page carries the nav). Suite **591→593**, ruff clean.
 
+### 2026-07-01 (session, cont.) — beginner-professional wave, items 1–5 (v0.7.0)
+Completed the full polish roadmap in order:
+1. **`/status` page** — `core/status.gather_status` (fail-soft, read-only): version, phase (parsed
+   from PROGRESS.md), trading config (venue/pairs/fees/leverage/sentiment-floor), §14 pre-flight
+   lights (5/5 auto-pass, 13 manual pending → NOT READY, correct), AI backends (env key NAMES only),
+   Ollama probe (injectable). `GET /api/status` + `/status` page + nav link. +6 tests.
+2. **`autotrader init` wizard** — 4 plain questions (exchange/pair/equity/mode) → writes the
+   profile → prints exactly what to run next (+ /help, /status pointers). Injectable IO; verified
+   live through the console command. +2 tests.
+3. **`config/app.toml` profile** — `core/profile.py` (tomllib, WHITELISTED keys only — a profile
+   can never carry risk knobs), fed into argparse via `set_defaults` (flags override); git-ignored,
+   `config/app.example.toml` documents keys. +3 tests.
+4. **Versioning** — `0.7.0` in pyproject + `src.__version__` (shown on /status), `CHANGELOG.md`
+   (keep-a-changelog; release process = tag at every phase gate; v1.0.0 reserved for P4 sign-off),
+   git tag `v0.7.0`.
+5. **Empty states** — dashboard/orders placeholders now say what will appear and why ("No decisions
+   yet — every signal, risk verdict and order is logged here each tick") instead of "no events"/"—".
+Suite **593→603**, ruff clean. Screenshots refreshed (status/dashboard/help/chat).
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

@@ -20,7 +20,10 @@ New here? Start the demo UI and open **/help**:
 ```bash
 pip install -e ".[dev]"
 autotrader-ui          # demo dashboard on http://127.0.0.1:8787 (no keys, no network)
+autotrader init        # first-run wizard: 4 questions → saves your defaults → tells you what to run
 ```
+
+Then check **/status** (system health lights) and **/help** (every metric explained, EN/VI).
 
 ## Read these first (orientation order)
 

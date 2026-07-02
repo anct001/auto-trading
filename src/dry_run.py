@@ -442,6 +442,54 @@ def _resolve_chat_config(args) -> dict:
     return {"chat_router": router}
 
 
+def _init_wizard(input_fn=input, print_fn=print) -> None:
+    """First-run wizard (`autotrader init`): a few plain questions → writes config/app.toml →
+    prints the exact command to run next. Touches ONLY the git-ignored profile (CLI defaults);
+    the hash-locked risk/strategy configs are never modified from here (§15). Paper only."""
+    from src.core.profile import DEFAULT_PATH, write_profile
+
+    def ask(prompt: str, default: str) -> str:
+        raw = input_fn(f"{prompt} [{default}]: ").strip()
+        return raw or default
+
+    print_fn("AutoTrader first-run setup — paper trading only, no real money, no API keys needed.")
+    print_fn("Press Enter to accept the [default] on any question.\n")
+
+    prof: dict = {}
+    prof["data_exchange"] = ask("Data exchange (ccxt id, e.g. kucoin/kraken/bitbank)", "kucoin")
+    prof["pair"] = ask("Trading pair", "BTC/USDT").upper()
+    raw_eq = ask("Starting PAPER equity", "10000")
+    try:
+        prof["equity"] = float(raw_eq)
+    except ValueError:
+        print_fn(f"  ('{raw_eq}' is not a number — using 10000)")
+        prof["equity"] = 10000.0
+
+    print_fn("\nWhat do you want to run first?")
+    print_fn("  1) Replay the last 30 days of real data  (recommended first step — finishes in minutes)")
+    print_fn("  2) Live paper loop                        (runs continuously, one tick per candle)")
+    print_fn("  3) Compare several coins over 30 days     (multi-pair replay on /replay)")
+    mode = ask("Choose 1/2/3", "1")
+    if mode == "2":
+        prof["iterations"] = 0
+    elif mode == "3":
+        prof["pairs"] = ask("Pairs to compare (comma-separated)", "BTC/USDT,ETH/USDT,SOL/USDT")
+        prof["replay_days"] = 30
+    else:
+        prof["replay_days"] = 30
+
+    prof["serve_ui"] = ask("Serve the dashboard UI at http://127.0.0.1:8787?", "yes").lower() in (
+        "y", "yes", "true", "1")
+
+    path = write_profile(prof)
+    print_fn(f"\n✔ Saved {path}  (git-ignored; edit any time — see {DEFAULT_PATH.replace('.toml', '.example.toml')})")
+    print_fn("\nNext steps:")
+    print_fn("  autotrader                # runs with these defaults (flags still override)")
+    if prof.get("serve_ui"):
+        print_fn("  → then open http://127.0.0.1:8787/help  (what every page & number means)")
+    print_fn("  → system health check:   http://127.0.0.1:8787/status")
+
+
 def main(argv: list[str] | None = None) -> None:
     import ccxt
 
@@ -449,6 +497,12 @@ def main(argv: list[str] | None = None) -> None:
     from src.strategy.ema_cross import EmaCross
 
     force_utf8_stdio()
+
+    import sys
+    _argv = sys.argv[1:] if argv is None else argv
+    if _argv[:1] == ["init"]:
+        return _init_wizard()  # first-run wizard: writes config/app.toml, prints next steps
+    argv = _argv
 
     p = argparse.ArgumentParser(description="Paper dry-run loop (no real capital).")
     p.add_argument("--data-exchange", default="kraken", help="ccxt id for the read-only OHLCV feed")
@@ -494,6 +548,19 @@ def main(argv: list[str] | None = None) -> None:
                         "defaults to env UI_AUTH_TOKEN. Unset = open (localhost only)")
     p.add_argument("--alert-webhook", default=None,
                    help="POST alerts (breaker/limit/kill) to this webhook URL (Telegram/Slack/push)")
+
+    # optional operator profile (config/app.toml, written by `autotrader init`): it only pre-sets
+    # CLI defaults — explicit flags still override, and risk/trading configs are untouched (§15).
+    from src.core.profile import DEFAULT_PATH, load_profile
+    try:
+        _prof = load_profile()
+        if _prof:
+            p.set_defaults(**_prof)
+            print(f"[dry-run] profile {DEFAULT_PATH} applied ({', '.join(sorted(_prof))}) — "
+                  "flags override")
+    except ValueError as e:
+        print(f"[dry-run] ⚠ {e} — profile ignored")
+
     args = p.parse_args(argv)
 
     import os

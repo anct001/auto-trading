@@ -1,0 +1,19 @@
+# AutoTrader operator profile — copy to config/app.toml (git-ignored) or run `autotrader init`.
+# These are CLI DEFAULTS for `autotrader` (= python -m src.dry_run); explicit flags override.
+# Convenience only: risk limits / strategy / fees live in the hash-locked config/ files (§15)
+# and cannot be changed from here.
+
+[dry_run]
+data_exchange = "kucoin"     # ccxt id of the read-only OHLCV feed (kucoin/kraken/bitbank/…)
+pair = "BTC/USDT"            # pair to trade on paper
+timeframe = "1h"
+equity = 10000.0             # starting PAPER equity (no real money anywhere)
+serve_ui = true              # serve the operator dashboard at http://127.0.0.1:8787
+ui_port = 8787
+# iterations = 0             # live loop: 0 = run forever
+# replay_days = 30           # or: replay N days of past data instead of the live loop
+# pairs = "BTC/USDT,ETH/USDT,SOL/USDT"   # multi-pair replay comparison (/replay)
+# strategies = "ema,rsi,donchian,funding" # strategy comparison on one pair (/replay)
+# chat_provider = "ollama"   # ollama (local) | anthropic | openai | gemini (keys from env)
+# chat_model = "llama3.1"
+# alert_webhook = "https://…" # Telegram/Slack webhook for breaker/kill alerts

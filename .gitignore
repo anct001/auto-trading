@@ -2,6 +2,9 @@
 .env
 .env.*
 !.env.example
+
+# per-operator CLI profile (autotrader init) — like .env, never committed
+config/app.toml
 *.key
 *.pem
 secrets/

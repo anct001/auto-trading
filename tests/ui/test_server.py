@@ -146,10 +146,26 @@ def test_help_page_and_favicon_are_served():
 
 def test_pages_carry_the_shared_nav():
     # every standard page gets the one top-nav (professional, consistent chrome)
-    for path in ("/", "/markets", "/coin", "/orders", "/replay", "/chat", "/help"):
+    for path in ("/", "/markets", "/coin", "/orders", "/replay", "/chat", "/status", "/help"):
         page = handle_request("GET", path, None, _ctx())
         assert page.status == 200 and 'class="topnav"' in page.body, path
         assert 'href="/help"' in page.body, path  # help reachable from everywhere
+
+
+def test_status_api_and_page():
+    canned = {"version": "0.7.0", "phase": "P0", "paper_mode": True, "config": {"venue": "bitbank"},
+              "config_error": None, "preflight": [], "auto_checks_pass": 5, "auto_checks_total": 5,
+              "manual_items_pending": 13, "ready_for_real_capital": False,
+              "chat_providers": [], "ollama_reachable": False}
+    ctx = OperatorContext(dashboard=lambda: {}, preview=lambda b: {}, killswitch=KillSwitch(),
+                          status=lambda: canned)
+    api = handle_request("GET", "/api/status", None, ctx)
+    assert api.status == 200 and api.body["ready_for_real_capital"] is False
+    # without a provider, the route falls back to gathering from the repo root (still works)
+    fallback = handle_request("GET", "/api/status", None, _ctx())
+    assert fallback.status == 200 and fallback.body["paper_mode"] is True
+    page = handle_request("GET", "/status", None, ctx)
+    assert page.status == 200 and "System status" in page.body
 
 
 def test_unknown_path_is_404():

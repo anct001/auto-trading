@@ -21,7 +21,13 @@ python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\ac
 pip install -e ".[dev]"
 pytest -q          # expect all green
 ruff check .       # expect clean
+
+autotrader init    # optional first-run wizard: writes config/app.toml (your CLI defaults);
+                   # after that a bare `autotrader` uses them (flags still override)
 ```
+
+Health check at any time: open **`/status`** on the dashboard (version, phase, config, §14
+pre-flight lights, AI backends). Beginner glossary: **`/help`** (EN/VI).
 
 The console here is cp1258 (Vietnamese); every entrypoint calls `core.console.force_utf8_stdio()`
 so non-ASCII (§, →, —) doesn't crash. If you add a new printing entrypoint, call it too.

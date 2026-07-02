@@ -40,6 +40,7 @@ class OperatorContext:
     trades_tape: Callable[[str], dict] | None = None  # pair -> recent public market trades (tape)
     chat: Callable[[dict], dict] | None = None  # body{question,provider?} -> {answer,error} READ-ONLY (Inv 1)
     chat_providers: Callable[[], dict] | None = None  # () -> {default, providers:[{name,model,default}]}
+    status: Callable[[], dict] | None = None  # () -> core.status.gather_status() payload (health lights)
     replay: Callable[[], dict] | None = None  # () -> multi-pair replay comparison model; None = no replay view
     auth_token: str | None = None  # if set, mutating writes require a matching X-Auth-Token; None = open (localhost)
 
@@ -55,7 +56,7 @@ class Response:
 
 _NAV_LINKS = [("/", "Dashboard"), ("/markets", "Markets"), ("/coin", "Coin"),
               ("/orders", "Orders"), ("/replay", "Replay"), ("/terminal", "Terminal"),
-              ("/pro", "Pro"), ("/chat", "Assistant"), ("/help", "Help")]
+              ("/pro", "Pro"), ("/chat", "Assistant"), ("/status", "Status"), ("/help", "Help")]
 
 _NAV_CSS = """
  .topnav{display:flex;align-items:center;gap:13px;background:#12151b;border:1px solid #1f2530;
@@ -138,6 +139,19 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
         return Response(200, _with_nav(help_html(), "/help"), content_type="text/html; charset=utf-8")
+
+    if path == "/status":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, _with_nav(status_html(), "/status"), content_type="text/html; charset=utf-8")
+
+    if path == "/api/status":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        if ctx.status is not None:
+            return Response(200, ctx.status())
+        from src.core.status import gather_status  # default: gather from the repo root
+        return Response(200, gather_status())
 
     if path == "/":
         if method != "GET":
@@ -344,7 +358,7 @@ function gauge(pct,c){pct=Math.max(0,Math.min(100,pct));
  return `<div class="bar"><div class="barfill" style="width:${pct}%;background:${COL[c]}"></div></div>`;}
 function drawEquity(curve){
  const svg=document.getElementById("eq");svg.innerHTML="";const W=900,H=130,pad=8;
- if(!curve||curve.length<2){svg.innerHTML='<text x=12 y=24 fill="#6b7280">accumulating…</text>';return;}
+ if(!curve||curve.length<2){svg.innerHTML='<text x=12 y=24 fill="#6b7280">accumulating — one point per tick/fill…</text>';return;}
  const ys=curve.map(p=>p.equity);const lo=Math.min(...ys),hi=Math.max(...ys);
  const x=i=>pad+i*(W-2*pad)/(curve.length-1),y=v=>H-pad-(v-lo)/((hi-lo)||1)*(H-2*pad);
  const up=ys[ys.length-1]>=ys[0],col=up?COL.ok:COL.bad;
@@ -382,13 +396,13 @@ function render(d){
   document.getElementById("perf").innerHTML=perf.map(c=>
    `<div class="card"><div class="lbl">${c[0]}</div><div class="val ${c[2]}">${c[1]}</div></div>`).join("");
   document.querySelector("#trades tbody").innerHTML=(d.trades||[]).map(t=>
-   `<tr><td>${(t.exit_time||"").slice(0,19).replace("T"," ")}</td><td>${t.pair}</td><td>${fmt(t.qty)}</td><td>${fmt(t.entry_price)}</td><td>${fmt(t.exit_price)}</td><td class="${t.return>=0?'ok':'bad'}">${(t.return*100).toFixed(3)}</td><td class="${t.pnl>=0?'ok':'bad'}">${fmt(t.pnl)}</td></tr>`).join("")||"<tr><td class=muted>none yet</td></tr>";
+   `<tr><td>${(t.exit_time||"").slice(0,19).replace("T"," ")}</td><td>${t.pair}</td><td>${fmt(t.qty)}</td><td>${fmt(t.entry_price)}</td><td>${fmt(t.exit_price)}</td><td class="${t.return>=0?'ok':'bad'}">${(t.return*100).toFixed(3)}</td><td class="${t.pnl>=0?'ok':'bad'}">${fmt(t.pnl)}</td></tr>`).join("")||"<tr><td class=muted colspan=7>No closed trades yet — a full round-trip (buy → sell) will appear here.</td></tr>";
   document.querySelector("#pos tbody").innerHTML=(d.positions||[]).map(p=>
-   `<tr><td>${p.pair}</td><td>${fmt(p.qty)}</td><td>${fmt(p.value)}</td><td class="${p.unrealized_pnl>=0?'ok':'bad'}">${fmt(p.unrealized_pnl)}</td><td>${fmt(p.exposure_pct)}</td><td><button onclick="flatten('${p.pair}',${p.qty},${p.price})">Flatten</button></td></tr>`).join("")||"<tr><td class=muted>flat</td></tr>";
+   `<tr><td>${p.pair}</td><td>${fmt(p.qty)}</td><td>${fmt(p.value)}</td><td class="${p.unrealized_pnl>=0?'ok':'bad'}">${fmt(p.unrealized_pnl)}</td><td>${fmt(p.exposure_pct)}</td><td><button onclick="flatten('${p.pair}',${p.qty},${p.price})">Flatten</button></td></tr>`).join("")||"<tr><td class=muted colspan=6>Flat — no open position. The bot only enters on a signal that passes the risk engine.</td></tr>";
   document.getElementById("log").innerHTML=(d.decision_log||[]).map(e=>{
    const qy=encodeURIComponent(`Explain this decision: ${e.timestamp} ${e.type} ${e.pair} ${e.detail||""}`);
    return `<div>${e.timestamp} <b>${e.type}</b> ${e.pair} ${e.detail} <a href="/chat?q=${qy}" title="Ask the assistant to explain">explain</a></div>`;
-  }).join("")||"<div class=muted>no events</div>";
+  }).join("")||"<div class=muted>No decisions yet — every signal, risk verdict and order is logged here each tick.</div>";
 }
 async function poll(){try{render(await (await fetch("/api/dashboard")).json());}
  catch(e){document.getElementById("msg").textContent="fetch error: "+e;}}
@@ -792,11 +806,11 @@ async function place(){const r=await (await fetch("/api/order",{method:"POST",
  document.getElementById("placeBtn").disabled=true;refresh();}
 async function refresh(){try{const d=await (await fetch("/api/orders")).json();
  document.querySelector("#att tbody").innerHTML=(d.attempts||[]).map(a=>
-  `<tr><td>${a.time}</td><td>${a.pair}</td><td>${a.side}</td><td>${fmt(a.qty)}</td><td class="${a.source}">${a.source}</td><td class="${a.approved?'ok':'bad'}">${a.approved?'passed':'rejected: '+(a.reasons||[]).join(';')}</td></tr>`).join("")||"<tr><td>—</td></tr>";
+  `<tr><td>${a.time}</td><td>${a.pair}</td><td>${a.side}</td><td>${fmt(a.qty)}</td><td class="${a.source}">${a.source}</td><td class="${a.approved?'ok':'bad'}">${a.approved?'passed':'rejected: '+(a.reasons||[]).join(';')}</td></tr>`).join("")||"<tr><td class=muted colspan=6>No order attempts yet — every bot or manual attempt appears here with its risk verdict.</td></tr>";
  document.querySelector("#sub tbody").innerHTML=(d.submitted||[]).map(s=>
-  `<tr><td>${s.time}</td><td>${s.pair}</td><td>${s.side}</td><td>${fmt(s.amount)}</td><td>${s.client_order_id}</td></tr>`).join("")||"<tr><td>—</td></tr>";
+  `<tr><td>${s.time}</td><td>${s.pair}</td><td>${s.side}</td><td>${fmt(s.amount)}</td><td>${s.client_order_id}</td></tr>`).join("")||"<tr><td class=muted colspan=5>None yet — risk-approved orders appear here when submitted.</td></tr>";
  document.querySelector("#fil tbody").innerHTML=(d.fills||[]).map(f=>
-  `<tr><td>${f.time}</td><td>${f.pair}</td><td>${fmt(f.filled)}</td></tr>`).join("")||"<tr><td>—</td></tr>";
+  `<tr><td>${f.time}</td><td>${f.pair}</td><td>${fmt(f.filled)}</td></tr>`).join("")||"<tr><td class=muted colspan=3>None yet — fills appear here once an order executes.</td></tr>";
 }catch(e){}}
 refresh();setInterval(refresh,5000);
 </script></body></html>"""
@@ -1089,6 +1103,65 @@ passes the same risk engine that a real order would; the AI assistant can only <
 </ul>
 <p class="ok">Full operator guide: <code>docs/RUNBOOK.md</code></p>
 </body></html>"""
+
+
+def status_html() -> str:
+    """System-health page (§12, read-only): green/amber/red lights over /api/status — phase,
+    trading config, §14 pre-flight checks, AI providers, Ollama. "Is everything OK?" at a glance."""
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Status · AutoTrader</title>
+<style>
+ body{font:14px system-ui,sans-serif;background:#0f1115;color:#d7dbe0;margin:0;padding:16px;max-width:1100px}
+ h1{font-size:17px;margin:0 0 12px} h2{font-size:13px;color:#8b93a1;margin:18px 0 8px;text-transform:uppercase}
+ .grid{display:flex;flex-wrap:wrap;gap:12px} .card{background:#12151b;border:1px solid #1f2530;border-radius:8px;padding:12px 16px;min-width:210px}
+ .lbl{color:#8b93a1;font-size:11px;text-transform:uppercase;margin-bottom:4px} .val{font-size:16px;font-weight:600}
+ .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:1px}
+ .g{background:#46d17f} .a{background:#e6a23c} .r{background:#f06a6a} .x{background:#5a6372}
+ table{border-collapse:collapse;width:100%;font-size:13px} th,td{text-align:left;padding:5px 10px;border-bottom:1px solid #1d232e}
+ th{color:#8b93a1;font-size:11px;text-transform:uppercase}
+ .PASS{color:#46d17f} .FAIL{color:#f06a6a} .WARN{color:#e6a23c} .MANUAL{color:#8b93a1}
+ .banner{border-radius:8px;padding:10px 14px;margin:12px 0;font-size:13px}
+ .notready{background:#1c1520;border:1px solid #4a2a35;color:#f0a0a0}
+ .muted{color:#8b93a1} code{background:#161a20;border:1px solid #232833;border-radius:4px;padding:1px 6px;font-size:12px}
+</style></head><body>
+<h1>System status <span id="ver" class="muted"></span></h1>
+<div class="grid" id="lights"></div>
+<div id="capital" class="banner notready" style="display:none"></div>
+<h2>Trading configuration</h2><div class="grid" id="cfg"></div>
+<h2>AI assistant backends</h2><div class="grid" id="ai"></div>
+<h2>Go-live pre-flight (§14) — every box must pass before ANY real money</h2>
+<table id="pf"><thead><tr><th></th><th>Check</th><th>Detail</th></tr></thead><tbody></tbody></table>
+<p class="muted">Read-only. Manual items are the operator's to complete — see <code>docs/RUNBOOK.md</code>.</p>
+<script>
+const dot=(c)=>`<span class="dot ${c}"></span>`;
+function card(l,v){return `<div class="card"><div class="lbl">${l}</div><div class="val">${v}</div></div>`}
+async function load(){const d=await (await fetch("/api/status")).json();
+ document.getElementById("ver").textContent=`v${d.version} · ${d.phase} · PAPER`;
+ const cfgOk=!d.config_error, auto=`${d.auto_checks_pass}/${d.auto_checks_total}`;
+ const autoC=d.auto_checks_pass===d.auto_checks_total?"g":"r";
+ document.getElementById("lights").innerHTML=[
+  card("Config files", dot(cfgOk?"g":"r")+(cfgOk?"loaded":"ERROR")),
+  card("Auto checks", dot(autoC)+auto+" pass"),
+  card("Local AI (Ollama)", dot(d.ollama_reachable?"g":"x")+(d.ollama_reachable?"running":"not running")),
+  card("Mode", dot("g")+"PAPER — no real money"),
+ ].join("");
+ const cap=document.getElementById("capital");cap.style.display="block";
+ cap.innerHTML=d.ready_for_real_capital?"Ready for real capital review (all gates pass — human sign-off still required)":
+  `<b>NOT READY for real capital</b> — ${d.manual_items_pending} operator gate(s) pending. This is expected before P4; paper trading is unaffected.`;
+ const c=d.config||{};
+ document.getElementById("cfg").innerHTML=[
+  card("Venue", c.venue??"—"), card("Pairs",(c.pairs||[]).join(", ")||"—"), card("Timeframe", c.timeframe??"—"),
+  card("Fees (maker/taker)", `${((c.maker_fee??0)*100).toFixed(2)}% / ${((c.taker_fee??0)*100).toFixed(2)}%`),
+  card("Leverage", dot(c.leverage===0?"g":"r")+String(c.leverage??"—")+(c.leverage===0?" (off — correct)":" (!)")),
+  card("Sentiment floor", String(c.sentiment_floor??"—")+(c.sentiment_floor===1?" (feature off — correct)":"")),
+ ].join("");
+ document.getElementById("ai").innerHTML=(d.chat_providers||[]).map(p=>
+  card(p.name+(p.local?" (local)":""), dot(p.available?"g":"x")+(p.available?(p.local?"always available":"key set"):`set ${p.env_var}`))).join("");
+ document.querySelector("#pf tbody").innerHTML=(d.preflight||[]).map(c=>
+  `<tr><td class="${c.status}">${c.status}</td><td>${c.item}</td><td class="muted">${c.detail||""}</td></tr>`).join("");
+}
+load();
+</script></body></html>"""
 
 
 def serve(ctx: OperatorContext, *, host: str = "127.0.0.1", port: int = 8787) -> None:
