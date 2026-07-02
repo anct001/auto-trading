@@ -14,14 +14,22 @@ loop; `main()` wires a real ccxt data feed + a paper exchange. Run:  ``python -m
 from __future__ import annotations
 
 import argparse
+import json
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 from backtest.runner import Costs
 from src.data import feed
-from src.events.log import FILL_RECEIVED, ORDER_SUBMITTED, EventLog, log_risk_decision
+from src.events.log import (
+    DAY_ROLLED,
+    FILL_RECEIVED,
+    ORDER_SUBMITTED,
+    EventLog,
+    log_risk_decision,
+)
 from src.execution.broker import Broker
 from src.execution.stops import StopManager
 from src.fast_loop import FastLoop, TickResult
@@ -103,12 +111,46 @@ class PaperAccount:
     realized_pnl: float = 0.0
     peak_equity: float = 0.0
     day_start_equity: float = 0.0
+    day_anchor: str = ""  # UTC date (YYYY-MM-DD) the daily loss limits are anchored to (§4)
 
     def __post_init__(self):
         if self.peak_equity <= 0:
             self.peak_equity = self.cash
         if self.day_start_equity <= 0:
             self.day_start_equity = self.cash
+
+    def roll_day(self, today_utc: str, prices: dict[str, float]) -> tuple[bool, str]:
+        """Re-anchor the DAILY loss limits when the UTC day changes (§4).
+
+        Without this, "daily" limits measured "since process start" and a cumulative soft-limit
+        loss silently blocked entries forever on a multi-day run. Returns (rolled, previous_anchor).
+        """
+        if self.day_anchor == today_utc:
+            return False, self.day_anchor
+        prev = self.day_anchor
+        self.day_start_equity = self.equity(prices)
+        self.day_anchor = today_utc
+        return True, prev
+
+    def to_dict(self) -> dict:
+        return {
+            "cash": self.cash, "quote_price": self.quote_price,
+            "realized_pnl": self.realized_pnl, "peak_equity": self.peak_equity,
+            "day_start_equity": self.day_start_equity, "day_anchor": self.day_anchor,
+            "positions": {p: {"qty": pos.qty, "entry_price": pos.entry_price}
+                          for p, pos in self.positions.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PaperAccount":
+        acct = cls(cash=float(d["cash"]), quote_price=float(d.get("quote_price", 1.0)),
+                   realized_pnl=float(d.get("realized_pnl", 0.0)),
+                   peak_equity=float(d.get("peak_equity", 0.0)),
+                   day_start_equity=float(d.get("day_start_equity", 0.0)))
+        acct.day_anchor = str(d.get("day_anchor", ""))
+        for pair, pos in (d.get("positions") or {}).items():
+            acct.positions[pair] = Position(pair, float(pos["qty"]), float(pos["entry_price"]))
+        return acct
 
     def equity(self, prices: dict[str, float]) -> float:
         return self.cash + sum(p.value(prices[pair]) for pair, p in self.positions.items())
@@ -138,7 +180,8 @@ class PaperAccount:
 class DryRunner:
     def __init__(self, *, data_exchange, loop: FastLoop, account: PaperAccount, costs: Costs,
                  pair: str, timeframe: str, limit: int = 200,
-                 killswitch: KillSwitch | None = None, prewarm: bool = True):
+                 killswitch: KillSwitch | None = None, prewarm: bool = True,
+                 checkpoint_path: str | None = None):
         self.data_exchange = data_exchange
         self.loop = loop
         self.account = account
@@ -166,6 +209,59 @@ class DryRunner:
         self._last_tick_at: str | None = None
         self._last_error: str | None = None  # last transient tick error (data feed hiccup, etc.)
         self.alerter = None  # optional ops.alerts.Alerter — fires on breaker/limit/kill each tick
+        self.checkpoint_path = checkpoint_path  # paper-state persistence (§9); None = disabled
+
+    # ---- paper-state checkpoint (§9 restart-safety for the PAPER account) --------------------
+    # The exchange side of §9 is reconcile.py; but in paper mode the "exchange" is also in-memory,
+    # so without this a ≥30-day run could not survive a restart. JSON snapshot per tick; atomic
+    # write; a corrupt file is preserved as evidence and the run starts fresh (fail-soft).
+
+    def save_checkpoint(self, path: str | None = None) -> None:
+        import os
+        target = path or self.checkpoint_path
+        if not target:
+            return
+        with self._lock:
+            payload = {
+                "version": 1, "pair": self.pair, "timeframe": self.timeframe,
+                "account": self.account.to_dict(),
+                "equity_history": list(self._equity_history),
+                "trades": list(self._trades),
+                "tick_count": self._tick_count,
+                "manual_seq": self._manual_seq,
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+            }
+        p = Path(target)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(tmp, p)
+
+    def load_checkpoint(self, path: str | None = None) -> bool:
+        """Restore paper state from a checkpoint. True if resumed; False = fresh start."""
+        target = path or self.checkpoint_path
+        if not target or not Path(target).exists():
+            return False
+        p = Path(target)
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            account = PaperAccount.from_dict(data["account"])
+        except Exception as e:  # corrupt/unreadable → keep evidence, start fresh (never crash)
+            corrupt = p.with_suffix(p.suffix + ".corrupt")
+            try:
+                p.replace(corrupt)
+            except OSError:
+                pass
+            print(f"[dry-run] ⚠ checkpoint unreadable ({type(e).__name__}: {e}) — "
+                  f"kept as {corrupt.name}, starting fresh")
+            return False
+        with self._lock:
+            self.account = account
+            self._equity_history = list(data.get("equity_history", []))
+            self._trades = list(data.get("trades", []))
+            self._tick_count = int(data.get("tick_count", 0))
+            self._manual_seq = int(data.get("manual_seq", 0))
+        return True
 
     def _check_alerts(self) -> None:
         """Run the alerter over the current operator state (edge-triggered; fail-soft)."""
@@ -270,6 +366,18 @@ class DryRunner:
             return None
         last_close = float(df["close"].iloc[-1])
         self.last_prices[self.pair] = last_close
+
+        # daily-limit rollover (§4): anchor "today" to the UTC day of the decision clock — the
+        # wall clock live, or the synthetic clock in replay (so replays roll historical days too)
+        wall_ms = int(now_ms) if now_ms is not None else int(time.time() * 1000)
+        today = datetime.fromtimestamp(wall_ms / 1000, tz=timezone.utc).date().isoformat()
+        with self._lock:
+            rolled, prev = self.account.roll_day(today, self.marks())
+        if rolled:
+            self.loop.events.append(DAY_ROLLED, {
+                "date": today, "prev_date": prev,
+                "day_start_equity": self.account.day_start_equity})
+
         ctx = engine.RiskContext(prices={self.pair: last_close},
                                  exchange_state=dict(_GOOD_EXCHANGE), killswitch=self.killswitch)
         state = self.account.to_state({self.pair: last_close})
@@ -364,6 +472,10 @@ class DryRunner:
                 self._last_error = f"{type(e).__name__}: {e}"
                 print(f"[dry-run] tick {i}: ERROR {self._last_error} (skipped, continuing)")
             self._check_alerts()
+            try:
+                self.save_checkpoint()  # persist paper state every tick (§9); no-op when disabled
+            except Exception as e:  # noqa: BLE001 — persistence must never stop the loop
+                print(f"[dry-run] ⚠ checkpoint save failed: {e}")
             i += 1
             if iterations is not None and i >= iterations:
                 break
@@ -401,7 +513,8 @@ def build_runner(*, data_exchange, paper_exchange, events: EventLog, strategy, c
                  costs: Costs, market: MarketConstraints, account: PaperAccount, pair: str,
                  timeframe: str, limit: int = 200, killswitch: KillSwitch | None = None,
                  atr_period: int = 14, atr_stop_mult: float = 2.0,
-                 sentiment_state_path: str | None = None, prewarm: bool = True) -> DryRunner:
+                 sentiment_state_path: str | None = None, prewarm: bool = True,
+                 checkpoint_path: str | None = None) -> DryRunner:
     markets = {pair: market}
     # Optional P1 sentiment haircut: read the slow-loop state file each entry (non-blocking, never
     # calls the LLM). Inert unless cfg.sentiment_floor < 1.0 (default 1.0 = off, §6/P1).
@@ -416,7 +529,7 @@ def build_runner(*, data_exchange, paper_exchange, events: EventLog, strategy, c
     )
     return DryRunner(data_exchange=data_exchange, loop=loop, account=account, costs=costs,
                      pair=pair, timeframe=timeframe, limit=limit, killswitch=killswitch,
-                     prewarm=prewarm)
+                     prewarm=prewarm, checkpoint_path=checkpoint_path)
 
 
 def _resolve_chat_config(args) -> dict:
@@ -529,6 +642,9 @@ def main(argv: list[str] | None = None) -> None:
                    help="perp symbol for funding (default <pair>:USDT) when comparing the funding strategy")
     p.add_argument("--poll-seconds", type=float, default=60.0)
     p.add_argument("--events", default="events/dry_run.jsonl")
+    p.add_argument("--checkpoint", default="state/dry_run.checkpoint.json",
+                   help="paper-state checkpoint file for the LIVE loop (resume after restart, §9); "
+                        "'off' disables. Replay modes never checkpoint (they are reruns).")
     p.add_argument("--sentiment-state", default=None,
                    help="path to sentiment_state.json (P1 haircut; inert unless sentiment_floor<1.0)")
     p.add_argument("--serve-ui", action="store_true",
@@ -537,10 +653,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--chat-model", default="llama3.1",
                    help="model for the /chat assistant (Ollama default llama3.1; per-provider "
                         "default used automatically for cloud providers)")
-    p.add_argument("--chat-provider", default="ollama", choices=["ollama", "anthropic", "openai"],
-                   help="AI backend for /chat. ollama = LOCAL (default; data never leaves). "
-                        "anthropic/openai are CLOUD (send dashboard state off-machine; key from "
-                        "ANTHROPIC_API_KEY / OPENAI_API_KEY env, never a flag)")
+    p.add_argument("--chat-provider", default="ollama",
+                   choices=["ollama", "anthropic", "openai", "gemini"],
+                   help="default AI backend for /chat. ollama = LOCAL (data never leaves). "
+                        "anthropic/openai/gemini are CLOUD (send dashboard state off-machine; key "
+                        "from ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY env, never a flag)")
     p.add_argument("--chat-base-url", default=None,
                    help="override the base URL for the openai provider (OpenAI-compatible endpoints)")
     p.add_argument("--ui-token", default=None,
@@ -571,14 +688,25 @@ def main(argv: list[str] | None = None) -> None:
     cfg = RiskConfig.load("config/risk/default.json")
     costs = Costs.load("config/backtest/costs.json")
     market = MarketConstraints(min_notional=10.0, lot_step=1e-5, tick_size=0.1)  # approx; verify per venue
+
+    # checkpoint applies only to the LIVE loop — replay/comparison modes are deterministic reruns
+    is_live = not (args.strategies or args.pairs or args.replay_file or args.replay_days > 0)
+    checkpoint_path = args.checkpoint if (is_live and args.checkpoint
+                                          and args.checkpoint.lower() != "off") else None
+
     runner = build_runner(
         data_exchange=data_ex, paper_exchange=PaperBrokerExchange(), events=EventLog(args.events),
         strategy=EmaCross(ema_fast=12, ema_slow=26), cfg=cfg, costs=costs, market=market,
         account=PaperAccount(cash=args.equity), pair=args.pair, timeframe=args.timeframe,
-        sentiment_state_path=args.sentiment_state,
+        sentiment_state_path=args.sentiment_state, checkpoint_path=checkpoint_path,
     )
     print(f"[dry-run] PAPER mode — no real capital. data={args.data_exchange} pair={args.pair} "
           f"tf={args.timeframe} equity={args.equity}")
+    if checkpoint_path and runner.load_checkpoint():
+        eq = runner.account.equity(runner.marks())
+        print(f"[dry-run] RESUMED from {checkpoint_path}: equity={eq:.2f}, "
+              f"ticks={runner.health()['tick_count']}, positions={len(runner.account.positions)} "
+              f"(delete the file to start fresh)")
 
     chat_cfg = _resolve_chat_config(args)  # provider/model/api_key/base_url for the /chat assistant
 

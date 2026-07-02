@@ -5,6 +5,9 @@
 
 # per-operator CLI profile (autotrader init) — like .env, never committed
 config/app.toml
+
+# paper-state checkpoints (runtime state, per-operator)
+state/
 *.key
 *.pem
 secrets/
