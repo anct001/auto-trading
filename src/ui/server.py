@@ -150,8 +150,9 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
             return Response(405, {"error": "read-only endpoint"})
         if ctx.status is not None:
             return Response(200, ctx.status())
+        from src.core.paths import repo_root
         from src.core.status import gather_status  # default: gather from the repo root
-        return Response(200, gather_status())
+        return Response(200, gather_status(root=repo_root()))
 
     if path == "/":
         if method != "GET":

@@ -610,6 +610,7 @@ def _init_wizard(input_fn=input, print_fn=print) -> None:
     """First-run wizard (`autotrader init`): a few plain questions → writes config/app.toml →
     prints the exact command to run next. Touches ONLY the git-ignored profile (CLI defaults);
     the hash-locked risk/strategy configs are never modified from here (§15). Paper only."""
+    from src.core.paths import repo_root
     from src.core.profile import DEFAULT_PATH, write_profile
 
     def ask(prompt: str, default: str) -> str:
@@ -645,7 +646,7 @@ def _init_wizard(input_fn=input, print_fn=print) -> None:
     prof["serve_ui"] = ask("Serve the dashboard UI at http://127.0.0.1:8787?", "yes").lower() in (
         "y", "yes", "true", "1")
 
-    path = write_profile(prof)
+    path = write_profile(prof, path=repo_root() / DEFAULT_PATH)
     print_fn(f"\n✔ Saved {path}  (git-ignored; edit any time — see {DEFAULT_PATH.replace('.toml', '.example.toml')})")
     print_fn("\nNext steps:")
     print_fn("  autotrader                # runs with these defaults (flags still override)")
@@ -692,8 +693,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--perp", default=None,
                    help="perp symbol for funding (default <pair>:USDT) when comparing the funding strategy")
     p.add_argument("--poll-seconds", type=float, default=60.0)
-    p.add_argument("--events", default="events/dry_run.jsonl")
-    p.add_argument("--checkpoint", default="state/dry_run.checkpoint.json",
+    from src.core.paths import repo_root
+    _root = repo_root()
+    p.add_argument("--events", default=str(_root / "events" / "dry_run.jsonl"))
+    p.add_argument("--checkpoint", default=str(_root / "state" / "dry_run.checkpoint.json"),
                    help="paper-state checkpoint file for the LIVE loop (resume after restart, §9); "
                         "'off' disables. Replay modes never checkpoint (they are reruns).")
     p.add_argument("--sentiment-state", default=None,
@@ -721,7 +724,7 @@ def main(argv: list[str] | None = None) -> None:
     # CLI defaults — explicit flags still override, and risk/trading configs are untouched (§15).
     from src.core.profile import DEFAULT_PATH, load_profile
     try:
-        _prof = load_profile()
+        _prof = load_profile(_root / DEFAULT_PATH)
         if _prof:
             p.set_defaults(**_prof)
             print(f"[dry-run] profile {DEFAULT_PATH} applied ({', '.join(sorted(_prof))}) — "
@@ -736,9 +739,21 @@ def main(argv: list[str] | None = None) -> None:
     if os.environ.get("HTTPS_PROXY"):
         data_ex.https_proxy = os.environ["HTTPS_PROXY"]
 
-    cfg = RiskConfig.load("config/risk/default.json")
-    costs = Costs.load("config/backtest/costs.json")
-    market = MarketConstraints(min_notional=10.0, lot_step=1e-5, tick_size=0.1)  # approx; verify per venue
+    cfg = RiskConfig.load(_root / "config" / "risk" / "default.json")
+    costs = Costs.load(_root / "config" / "backtest" / "costs.json")
+
+    # strategy params come from the HASH-LOCKED config (§15) — no more hardcoded 12/26 drift
+    strat_cfg = json.loads(
+        (_root / "config" / "strategy" / "ema_cross.json").read_text(encoding="utf-8"))
+    strategy = EmaCross.from_config(strat_cfg)
+    print(f"[dry-run] strategy from config: {strat_cfg['name']} {strat_cfg['params']}")
+
+    # market constraints from the venue's own ccxt metadata (fail-soft to the old approximations)
+    from src.data.market_meta import market_constraints_from_ccxt
+    _fallback_mc = MarketConstraints(min_notional=10.0, lot_step=1e-5, tick_size=0.1)
+    market, mc_src = market_constraints_from_ccxt(data_ex, args.pair, _fallback_mc)
+    print(f"[dry-run] market constraints {args.pair}: min_notional={market.min_notional} "
+          f"lot_step={market.lot_step} tick={market.tick_size} ({mc_src})")
 
     # checkpoint applies only to the LIVE loop — replay/comparison modes are deterministic reruns
     is_live = not (args.strategies or args.pairs or args.replay_file or args.replay_days > 0)
@@ -747,7 +762,7 @@ def main(argv: list[str] | None = None) -> None:
 
     runner = build_runner(
         data_exchange=data_ex, paper_exchange=PaperBrokerExchange(), events=EventLog(args.events),
-        strategy=EmaCross(ema_fast=12, ema_slow=26), cfg=cfg, costs=costs, market=market,
+        strategy=strategy, cfg=cfg, costs=costs, market=market,
         account=PaperAccount(cash=args.equity), pair=args.pair, timeframe=args.timeframe,
         sentiment_state_path=args.sentiment_state, checkpoint_path=checkpoint_path,
     )
