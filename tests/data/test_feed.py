@@ -50,6 +50,31 @@ def test_timeframe_to_ms_rejects_garbage(tf):
         feed.timeframe_to_ms(tf)
 
 
+# ---- seconds_to_next_candle (smart poll, audit #9) ---------------------------------------------
+
+def test_seconds_to_next_candle_mid_candle():
+    # 30 min into a 1h candle → 30 min left + grace
+    now = 3 * HOUR_MS + 30 * 60_000
+    assert feed.seconds_to_next_candle(now, HOUR_MS, grace=5.0) == 1800.0 + 5.0
+
+
+def test_seconds_to_next_candle_on_the_boundary_waits_a_full_candle():
+    # exactly at a close the new candle just opened — wait its full duration
+    assert feed.seconds_to_next_candle(7 * HOUR_MS, HOUR_MS, grace=5.0) == 3600.0 + 5.0
+
+
+def test_seconds_to_next_candle_just_before_close_never_returns_tiny_sleep():
+    # 1ms before the close → grace keeps us from hammering the venue before the candle exists
+    now = 2 * HOUR_MS - 1
+    out = feed.seconds_to_next_candle(now, HOUR_MS, grace=5.0)
+    assert 5.0 <= out <= 5.001
+
+
+def test_seconds_to_next_candle_rejects_bad_timeframe():
+    with pytest.raises(ValueError):
+        feed.seconds_to_next_candle(0, 0)
+
+
 # ---- closed-candle filtering (the no-look-ahead guarantee) -----------------------------------
 
 def test_drops_still_forming_last_candle():

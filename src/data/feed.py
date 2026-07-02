@@ -52,6 +52,20 @@ def timeframe_to_ms(timeframe: str) -> int:
     return qty * _UNIT_MS[match.group(2)]
 
 
+def seconds_to_next_candle(now_ms: float, timeframe_ms: int, grace: float = 5.0) -> float:
+    """Seconds to sleep so the next tick lands just AFTER the next candle closes.
+
+    Candle boundaries are epoch-aligned multiples of ``timeframe_ms`` (ccxt convention).
+    ``grace`` pads past the close so the venue has actually published the candle — without it,
+    waking exactly on the boundary re-fetches the still-open candle and wastes the tick.
+    Exactly on a boundary the new candle just opened, so the wait is a full timeframe + grace.
+    """
+    if timeframe_ms <= 0:
+        raise ValueError(f"timeframe_ms must be positive: {timeframe_ms!r}")
+    next_close_ms = (int(now_ms) // timeframe_ms + 1) * timeframe_ms
+    return (next_close_ms - now_ms) / 1000.0 + grace
+
+
 def _now_ms() -> int:
     return int(datetime.now(timezone.utc).timestamp() * 1000)
 

@@ -131,6 +131,18 @@ def test_run_survives_transient_feed_errors(tmp_path):
     assert h["last_error"] is not None and "ConnectionError" in h["last_error"]
 
 
+def test_run_auto_poll_sleeps_until_the_next_candle_close(tmp_path, monkeypatch):
+    # audit #9: default polling waits for the next close instead of a blind 60s spin
+    paper, account = PaperBrokerExchange(), PaperAccount(cash=100000.0)
+    runner = _runner(ScriptStrategy([INTENT_HOLD]), EventLog(tmp_path / "e.jsonl"), paper, account)
+    fixed_now_s = (1_000 * HOUR_MS + 15 * 60_000) / 1000.0   # 15 min into a 1h candle
+    slept: list[float] = []
+    monkeypatch.setattr("src.dry_run.time.time", lambda: fixed_now_s)
+    monkeypatch.setattr("src.dry_run.time.sleep", lambda s: slept.append(s))
+    runner.run(iterations=2, poll_seconds=None)              # None = align to candle close
+    assert slept == [45 * 60 + 5.0]                          # 45 min left + 5s grace
+
+
 def test_equity_history_records_each_tick(tmp_path):
     paper, account = PaperBrokerExchange(), PaperAccount(cash=100000.0)
     r = _runner(ScriptStrategy([INTENT_HOLD, INTENT_HOLD]), EventLog(tmp_path / "e.jsonl"), paper, account)

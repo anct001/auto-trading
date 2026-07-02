@@ -499,8 +499,13 @@ class DryRunner:
                 self._record_equity()  # reflect the manual fill on the UI equity curve
             return {"placed": True, "filled": submit.filled, "reasons": []}
 
-    def run(self, *, iterations: int | None = None, poll_seconds: float = 60.0) -> None:
-        """CLI loop: tick, then sleep until roughly the next candle. iterations=None runs forever.
+    def run(self, *, iterations: int | None = None, poll_seconds: float | None = None) -> None:
+        """CLI loop: tick, then sleep until the next candle. iterations=None runs forever.
+
+        ``poll_seconds=None`` (the default) aligns each sleep to the next candle close + a small
+        grace, so a 1h dry-run ticks once per candle instead of blind-spinning every 60s — 60×
+        fewer venue calls and no mid-candle no-op ticks. A number fixes the interval instead
+        (0 = no sleep, used by tests).
 
         A tick must NEVER kill the loop: a transient data-feed error (network reset, exchange 5xx,
         rate limit) is caught, recorded, and skipped — a missing candle simply means no decision
@@ -526,7 +531,12 @@ class DryRunner:
             i += 1
             if iterations is not None and i >= iterations:
                 break
-            time.sleep(poll_seconds)
+            if poll_seconds is None:
+                wait = feed.seconds_to_next_candle(time.time() * 1000.0,
+                                                   feed.timeframe_to_ms(self.timeframe))
+            else:
+                wait = poll_seconds
+            time.sleep(wait)
 
     def replay(self, *, warmup: int | None = None, progress_every: int = 0) -> dict:
         """Replay the fast loop over PAST data (``data_exchange`` must be a :class:`ReplayFeed`).
@@ -692,7 +702,8 @@ def main(argv: list[str] | None = None) -> None:
                         "--pair over --replay-days; serves the /replay dashboard + assistant.")
     p.add_argument("--perp", default=None,
                    help="perp symbol for funding (default <pair>:USDT) when comparing the funding strategy")
-    p.add_argument("--poll-seconds", type=float, default=60.0)
+    p.add_argument("--poll-seconds", type=float, default=None,
+                   help="fixed sleep between ticks; default aligns to the next candle close")
     from src.core.paths import repo_root
     _root = repo_root()
     p.add_argument("--events", default=str(_root / "events" / "dry_run.jsonl"))
