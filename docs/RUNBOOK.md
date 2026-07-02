@@ -197,13 +197,19 @@ Re-locking is a deliberate act with human sign-off — never automate it into a 
 ## 9. Go-live pre-flight (§14) — the gate, not the trigger
 
 ```bash
-python scripts/go_live_preflight.py
+python scripts/go_live_preflight.py                                   # the report
+python scripts/go_live_preflight.py --list-slugs                      # sign-off vocabulary
+python scripts/go_live_preflight.py --sign forward-dry-run --operator "Your Name"
 ```
 
 Auto-checks (config lock, leverage=0, sentiment_floor=1.0, kill-switch, no secret in `.env.example`)
-plus the operator-only §14 items. `is_ready` stays **False** until every gate is genuinely done and
-HUMAN SIGN-OFF is recorded. Placing no orders, it never moves money — it only tells you the truth
-about readiness. When (and only when) it is green and you have signed off, P4 begins with the
+plus the operator-only §14 items. Each operator item has a stable slug; when you have **genuinely
+done** the gated work, record your sign-off with `--sign <slug> --operator <name>` — it lands in
+`ops/signoff.json` as who/when and the item flips MANUAL → SIGNED on the report and `/status`.
+Signing records, it never verifies: the registry is your word as the human partner (Inv 5), so
+never sign ahead of the work. `is_ready` stays **False** until every auto-check passes AND all 13
+items are signed — including `human-signoff` last. Placing no orders, it never moves money — it
+only tells you the truth about readiness. When (and only when) it is green, P4 begins with the
 smallest meaningful capital, spot-only, no leverage.
 
 ## Quick reference

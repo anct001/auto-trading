@@ -85,20 +85,22 @@ def gather_status(*, root: str | Path = ".", env=None, ollama_probe=None) -> dic
         out["config_error"] = f"{type(e).__name__}: {e}"
 
     try:
-        from src.core.preflight import MANUAL, PASS, is_ready, run_preflight
+        from src.core.preflight import MANUAL, PASS, SIGNED, is_ready, run_preflight
         checks = run_preflight(root)
         out["preflight"] = [{"item": c.item, "status": c.status, "detail": c.detail}
                             for c in checks]
-        auto = [c for c in checks if c.status != MANUAL]
+        auto = [c for c in checks if c.status not in (MANUAL, SIGNED)]
         out["auto_checks_pass"] = sum(1 for c in auto if c.status == PASS)
         out["auto_checks_total"] = len(auto)
         out["manual_items_pending"] = sum(1 for c in checks if c.status == MANUAL)
+        out["manual_items_signed"] = sum(1 for c in checks if c.status == SIGNED)
         out["ready_for_real_capital"] = is_ready(checks)
     except Exception as e:
         out["preflight"] = []
         out["auto_checks_pass"] = 0
         out["auto_checks_total"] = 0
         out["manual_items_pending"] = 0
+        out["manual_items_signed"] = 0
         out["ready_for_real_capital"] = False
         out["preflight_error"] = f"{type(e).__name__}: {e}"
 

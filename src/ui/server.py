@@ -1140,7 +1140,7 @@ def status_html() -> str:
  .g{background:#46d17f} .a{background:#e6a23c} .r{background:#f06a6a} .x{background:#5a6372}
  table{border-collapse:collapse;width:100%;font-size:13px} th,td{text-align:left;padding:5px 10px;border-bottom:1px solid #1d232e}
  th{color:#8b93a1;font-size:11px;text-transform:uppercase}
- .PASS{color:#46d17f} .FAIL{color:#f06a6a} .WARN{color:#e6a23c} .MANUAL{color:#8b93a1}
+ .PASS{color:#46d17f} .FAIL{color:#f06a6a} .WARN{color:#e6a23c} .MANUAL{color:#8b93a1} .SIGNED{color:#46d17f}
  .banner{border-radius:8px;padding:10px 14px;margin:12px 0;font-size:13px}
  .notready{background:#1c1520;border:1px solid #4a2a35;color:#f0a0a0}
  .muted{color:#8b93a1} code{background:#161a20;border:1px solid #232833;border-radius:4px;padding:1px 6px;font-size:12px}
