@@ -778,6 +778,21 @@ per fix group, TDD where money-adjacent:
    Origin now → 403 (no-Origin curl/tests unaffected). `/api/chat` joined `_PROTECTED_WRITES`
    (a cloud-provider call burns the operator's API credits). Token fetch-wrapper installed on
    the chat + replay pages too. +2 tests (suite →624).
+8. **§14 sign-off registry** — the 13 operator-only go-live items got stable slugs; the operator
+   records who/when via `go_live_preflight.py --sign <slug> --operator <name>` →
+   `ops/signoff.json`; report + `/status` flip MANUAL → SIGNED; `is_ready` = every auto-check
+   PASS **and** all items SIGNED (FAIL/WARN can't be signed away; corrupt registry reads as
+   nothing-signed; template ships empty — nothing pre-signed, Inv 4/5). +7 tests (suite →631).
+9. **Candle-aligned polling** — the loop blind-slept 60s regardless of timeframe (~60 no-op
+   venue calls per 1h candle, and up to 60s late on a close); `feed.seconds_to_next_candle`
+   sleeps to the next epoch-aligned boundary + 5s grace; `--poll-seconds` default is now auto,
+   a number = fixed override (0 in tests). +5 tests (suite →636).
+10. **Professional gaps** — CI advisory mypy step (non-blocking; 13 pre-existing errors visible),
+    `GET /api/trades.csv` + dashboard ⬇ CSV link (spreadsheet/tax export), CHANGELOG `0.7.1`,
+    version bump. +1 test (suite →637).
+
+Wave complete: **suite 603 → 637**, every fix its own commit, ruff clean throughout, real-data
+verifications along the way (kucoin BTC/USDT replay; multi-pair; strategy comparison).
 
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,

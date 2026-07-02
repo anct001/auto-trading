@@ -243,6 +243,19 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
             return Response(405, {"error": "read-only endpoint"})
         return Response(200, ctx.dashboard())
 
+    if path == "/api/trades.csv":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        import csv
+        import io
+        cols = ["exit_time", "pair", "qty", "entry_price", "exit_price", "return", "pnl"]
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+        w.writeheader()
+        for t in ctx.dashboard().get("trades") or []:
+            w.writerow({c: t.get(c, "") for c in cols})
+        return Response(200, buf.getvalue(), content_type="text/csv; charset=utf-8")
+
     if path == "/metrics":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
@@ -362,7 +375,8 @@ def index_html() -> str:
 <div class="grid" id="perf"></div>
 <div class="card" style="min-width:100%"><div class="lbl">Open positions</div><table id="pos"><thead>
 <tr><th>Pair</th><th>Qty</th><th>Value</th><th>Unrealized</th><th>Exposure %</th><th></th></tr></thead><tbody></tbody></table></div>
-<div class="card" style="min-width:100%"><div class="lbl">Closed trades</div><table id="trades"><thead>
+<div class="card" style="min-width:100%"><div class="lbl">Closed trades
+ <a href="/api/trades.csv" download="trades.csv" style="float:right;font-size:11px;color:#6ea8fe">⬇ CSV</a></div><table id="trades"><thead>
 <tr><th>Exit time</th><th>Pair</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Return %</th><th>P&L</th></tr></thead><tbody></tbody></table></div>
 <div class="card" style="min-width:100%"><div class="lbl">Decision log</div><div id="log"></div></div>
 <div style="margin-top:12px"><button class="kill" onclick="engage()">Engage kill-switch</button>

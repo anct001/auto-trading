@@ -126,6 +126,27 @@ def test_chat_is_token_protected_when_token_configured():
                           {"X-Auth-Token": "s3cr3t"}).status == 200
 
 
+def test_trades_csv_export():
+    # audit #10: the operator can pull closed trades as CSV for a spreadsheet / tax records
+    trades = [{"exit_time": "2026-07-01T10:00:00+00:00", "pair": "BTC/USDT", "qty": 0.02,
+               "entry_price": 100.0, "exit_price": 110.0, "return": 0.1, "pnl": 0.2},
+              {"exit_time": "2026-07-01T11:00:00+00:00", "pair": "ETH/USDT", "qty": 1.5,
+               "entry_price": 50.0, "exit_price": 45.0, "return": -0.1, "pnl": -7.5}]
+    ctx = OperatorContext(dashboard=lambda: {"trades": trades}, preview=lambda b: {},
+                          killswitch=KillSwitch())
+    r = handle_request("GET", "/api/trades.csv", None, ctx)
+    assert r.status == 200 and r.content_type.startswith("text/csv")
+    lines = r.body.strip().splitlines()
+    assert lines[0] == "exit_time,pair,qty,entry_price,exit_price,return,pnl"
+    assert lines[1].startswith("2026-07-01T10:00:00+00:00,BTC/USDT,0.02,100.0,110.0,0.1,0.2")
+    assert len(lines) == 3
+    # no trades → header only, still a valid CSV
+    empty = OperatorContext(dashboard=lambda: {}, preview=lambda b: {}, killswitch=KillSwitch())
+    r = handle_request("GET", "/api/trades.csv", None, empty)
+    assert r.status == 200 and r.body.strip() == "exit_time,pair,qty,entry_price,exit_price,return,pnl"
+    assert handle_request("POST", "/api/trades.csv", {}, empty).status == 405
+
+
 def test_no_auth_token_configured_leaves_writes_open():
     # default (no token) is backward compatible: mutating writes need no header
     ks = KillSwitch()
