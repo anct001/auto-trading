@@ -45,6 +45,178 @@ def test_rearm_without_operator_is_400():
     assert r.status == 400 and "error" in r.body
 
 
+def test_malformed_write_body_is_400_not_a_crash():
+    # the live _place/_preview wrappers do float(body["qty"]) — a non-numeric value raises
+    # ValueError. The router must turn that into a clean 400, not let the exception escape and
+    # leak a traceback / 500 to the operator (the manual-order path is risk-gated, but a bad
+    # *request* should fail gracefully). Mirrors the real provider behavior.
+    ks = KillSwitch()
+    bad = OperatorContext(
+        dashboard=lambda: {},
+        preview=lambda body: {"ok": float(body["qty"])},
+        killswitch=ks,
+        place=lambda body: {"ok": float(body["qty"])},
+    )
+    for path in ("/api/preview", "/api/order"):
+        r = handle_request("POST", path, {"side": "buy", "qty": "abc"}, bad)
+        assert r.status == 400 and "error" in r.body, path
+
+
+def test_chat_disabled_is_404_enabled_returns_answer():
+    # default ctx has chat=None -> the assistant endpoint is disabled
+    assert handle_request("POST", "/api/chat", {"question": "hi"}, _ctx()).status == 404
+    ctx = OperatorContext(
+        dashboard=lambda: {}, preview=lambda b: {}, killswitch=KillSwitch(),
+        chat=lambda body: {"answer": "you are flat", "error": None},
+    )
+    r = handle_request("POST", "/api/chat", {"question": "why flat?"}, ctx)
+    assert r.status == 200 and r.body["answer"] == "you are flat"
+    # the assistant is read-only: GET /chat serves a page, POST is required for the API
+    assert handle_request("GET", "/chat", None, ctx).status == 200
+    assert handle_request("GET", "/api/chat", None, ctx).status == 405
+
+
+def test_auth_token_gates_mutating_writes_only():
+    ks = KillSwitch()
+    ctx = OperatorContext(
+        dashboard=lambda: {"equity": 1.0}, preview=lambda b: {"allowed": True}, killswitch=ks,
+        place=lambda b: {"placed": True}, chat=lambda b: {"answer": "hi"},
+        auth_token="s3cr3t",
+    )
+    # no token -> mutating writes are 401
+    assert handle_request("POST", "/api/order", {}, ctx).status == 401
+    assert handle_request("POST", "/api/killswitch/engage", None, ctx).status == 401
+    # wrong token -> 401
+    assert handle_request("POST", "/api/order", {}, ctx, {"X-Auth-Token": "nope"}).status == 401
+    # right token -> allowed
+    assert handle_request("POST", "/api/order", {}, ctx, {"X-Auth-Token": "s3cr3t"}).status == 200
+    assert handle_request("POST", "/api/killswitch/engage", None, ctx,
+                          {"x-auth-token": "s3cr3t"}).status == 200  # header case-insensitive
+    # read endpoints + the preview stay open without a token
+    assert handle_request("GET", "/api/dashboard", None, ctx).status == 200
+    assert handle_request("POST", "/api/preview", {}, ctx).status == 200
+    # chat joined the protected writes (cloud credit burn — audit #7)
+    assert handle_request("POST", "/api/chat", {"question": "hi"}, ctx).status == 401
+
+
+def test_cross_site_post_is_rejected_by_origin_check():
+    # CSRF hardening (audit #7): a browser POST from a foreign site carries its Origin — reject it
+    ks = KillSwitch()
+    ctx = OperatorContext(dashboard=lambda: {}, preview=lambda b: {}, killswitch=ks,
+                          place=lambda b: {"placed": True}, chat=lambda b: {"answer": "hi"})
+    for path, body in (("/api/order", {}), ("/api/killswitch/engage", None),
+                       ("/api/chat", {"question": "hi"}), ("/api/preview", {})):
+        r = handle_request("POST", path, body, ctx, {"Origin": "https://evil.example"})
+        assert r.status == 403, path
+    # our own pages (localhost origin) and non-browser clients (no Origin) still work
+    assert handle_request("POST", "/api/order", {}, ctx,
+                          {"Origin": "http://127.0.0.1:8787"}).status == 200
+    assert handle_request("POST", "/api/order", {}, ctx,
+                          {"Origin": "http://localhost:8787"}).status == 200
+    assert handle_request("POST", "/api/order", {}, ctx).status == 200
+
+
+def test_chat_is_token_protected_when_token_configured():
+    # audit #7: /api/chat can burn cloud API credits — it joins the protected writes
+    ks = KillSwitch()
+    ctx = OperatorContext(dashboard=lambda: {}, preview=lambda b: {}, killswitch=ks,
+                          chat=lambda b: {"answer": "hi"}, auth_token="s3cr3t")
+    assert handle_request("POST", "/api/chat", {"question": "x"}, ctx).status == 401
+    assert handle_request("POST", "/api/chat", {"question": "x"}, ctx,
+                          {"X-Auth-Token": "s3cr3t"}).status == 200
+
+
+def test_trades_csv_export():
+    # audit #10: the operator can pull closed trades as CSV for a spreadsheet / tax records
+    trades = [{"exit_time": "2026-07-01T10:00:00+00:00", "pair": "BTC/USDT", "qty": 0.02,
+               "entry_price": 100.0, "exit_price": 110.0, "return": 0.1, "pnl": 0.2},
+              {"exit_time": "2026-07-01T11:00:00+00:00", "pair": "ETH/USDT", "qty": 1.5,
+               "entry_price": 50.0, "exit_price": 45.0, "return": -0.1, "pnl": -7.5}]
+    ctx = OperatorContext(dashboard=lambda: {"trades": trades}, preview=lambda b: {},
+                          killswitch=KillSwitch())
+    r = handle_request("GET", "/api/trades.csv", None, ctx)
+    assert r.status == 200 and r.content_type.startswith("text/csv")
+    lines = r.body.strip().splitlines()
+    assert lines[0] == "exit_time,pair,qty,entry_price,exit_price,return,pnl"
+    assert lines[1].startswith("2026-07-01T10:00:00+00:00,BTC/USDT,0.02,100.0,110.0,0.1,0.2")
+    assert len(lines) == 3
+    # no trades → header only, still a valid CSV
+    empty = OperatorContext(dashboard=lambda: {}, preview=lambda b: {}, killswitch=KillSwitch())
+    r = handle_request("GET", "/api/trades.csv", None, empty)
+    assert r.status == 200 and r.body.strip() == "exit_time,pair,qty,entry_price,exit_price,return,pnl"
+    assert handle_request("POST", "/api/trades.csv", {}, empty).status == 405
+
+
+def test_no_auth_token_configured_leaves_writes_open():
+    # default (no token) is backward compatible: mutating writes need no header
+    ks = KillSwitch()
+    ctx = OperatorContext(dashboard=lambda: {}, preview=lambda b: {}, killswitch=ks,
+                          place=lambda b: {"placed": True})
+    assert handle_request("POST", "/api/order", {}, ctx).status == 200
+
+
+def test_replay_routes_serve_comparison_and_page():
+    comparison = {"pairs": ["BTC/USDT"], "best_pair": "BTC/USDT", "table": [{"pair": "BTC/USDT"}]}
+    ctx = OperatorContext(dashboard=lambda: {}, preview=lambda b: {}, killswitch=KillSwitch(),
+                          replay=lambda: comparison)
+    api = handle_request("GET", "/api/replay", None, ctx)
+    assert api.status == 200 and api.body["best_pair"] == "BTC/USDT"
+    page = handle_request("GET", "/replay", None, ctx)
+    assert page.status == 200 and "text/html" in page.content_type
+    # disabled replay -> empty model, not an error
+    empty = handle_request("GET", "/api/replay", None, _ctx())
+    assert empty.status == 200 and empty.body["table"] == []
+
+
+def test_chat_providers_endpoint():
+    ctx = OperatorContext(
+        dashboard=lambda: {}, preview=lambda b: {}, killswitch=KillSwitch(),
+        chat=lambda b: {"answer": "hi"},
+        chat_providers=lambda: {"default": "ollama",
+                                "providers": [{"name": "ollama", "model": "llama3.1"},
+                                              {"name": "openai", "model": "gpt-4o-mini"}]})
+    r = handle_request("GET", "/api/chat/providers", None, ctx)
+    assert r.status == 200 and r.body["default"] == "ollama"
+    assert {p["name"] for p in r.body["providers"]} == {"ollama", "openai"}
+    # disabled -> empty list, not an error; POST is 405 (read-only)
+    assert handle_request("GET", "/api/chat/providers", None, _ctx()).body["providers"] == []
+    assert handle_request("POST", "/api/chat/providers", {}, ctx).status == 405
+
+
+def test_help_page_and_favicon_are_served():
+    ctx = _ctx()
+    help_page = handle_request("GET", "/help", None, ctx)
+    assert help_page.status == 200 and help_page.content_type.startswith("text/html")
+    # bilingual beginner glossary is present
+    assert "Profit Factor" in help_page.body and "Trợ giúp" in help_page.body
+    fav = handle_request("GET", "/favicon.ico", None, ctx)
+    assert fav.status == 200 and fav.content_type == "image/svg+xml" and "<svg" in fav.body
+
+
+def test_pages_carry_the_shared_nav():
+    # every standard page gets the one top-nav (professional, consistent chrome)
+    for path in ("/", "/markets", "/coin", "/orders", "/replay", "/chat", "/status", "/help"):
+        page = handle_request("GET", path, None, _ctx())
+        assert page.status == 200 and 'class="topnav"' in page.body, path
+        assert 'href="/help"' in page.body, path  # help reachable from everywhere
+
+
+def test_status_api_and_page():
+    canned = {"version": "0.7.0", "phase": "P0", "paper_mode": True, "config": {"venue": "bitbank"},
+              "config_error": None, "preflight": [], "auto_checks_pass": 5, "auto_checks_total": 5,
+              "manual_items_pending": 13, "ready_for_real_capital": False,
+              "chat_providers": [], "ollama_reachable": False}
+    ctx = OperatorContext(dashboard=lambda: {}, preview=lambda b: {}, killswitch=KillSwitch(),
+                          status=lambda: canned)
+    api = handle_request("GET", "/api/status", None, ctx)
+    assert api.status == 200 and api.body["ready_for_real_capital"] is False
+    # without a provider, the route falls back to gathering from the repo root (still works)
+    fallback = handle_request("GET", "/api/status", None, _ctx())
+    assert fallback.status == 200 and fallback.body["paper_mode"] is True
+    page = handle_request("GET", "/status", None, ctx)
+    assert page.status == 200 and "System status" in page.body
+
+
 def test_unknown_path_is_404():
     assert handle_request("GET", "/api/nope", None, _ctx()).status == 404
 

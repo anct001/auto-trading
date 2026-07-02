@@ -13,7 +13,7 @@ import pytest
 
 from src.risk.config import RiskConfig
 from src.risk.sizing import MarketConstraints, compute_size
-from src.risk.types import Order, PortfolioState
+from src.risk.types import Order, Position, PortfolioState
 
 
 def _cfg(**over):
@@ -196,6 +196,67 @@ def test_infeasible_result_cannot_make_order():
     )
     with pytest.raises(ValueError):
         res.to_order(source="strategy")
+
+
+_ALT_MARKET = MarketConstraints(min_notional=10.0, lot_step=0.001, tick_size=0.01)
+
+
+def test_clamp_per_asset_is_opt_in_default_off_preserves_kelly():
+    # default (no clamp): tiny ATR sizes up to the 50% Kelly cap = 5000 notional (unchanged P0 path)
+    res = compute_size(pair="ALT/USDT", price=100.0, atr=0.1, state=_state(10000.0),
+                       cfg=_cfg(), market=_ALT_MARKET, atr_stop_mult=2.0)
+    assert math.isclose(res.notional, 5000.0, rel_tol=1e-9)
+
+
+def test_clamp_per_asset_limits_notional_to_the_cap():
+    # with the clamp on, the same over-cap size is reduced to the 25% per-asset cap = 2500 notional
+    res = compute_size(pair="ALT/USDT", price=100.0, atr=0.1, state=_state(10000.0),
+                       cfg=_cfg(), market=_ALT_MARKET, atr_stop_mult=2.0, clamp_per_asset=True)
+    assert res.feasible
+    assert math.isclose(res.notional, 2500.0, rel_tol=1e-9)   # 25% of 10000, not 50%
+    assert math.isclose(res.qty, 25.0, rel_tol=1e-9)
+
+
+def test_clamp_per_asset_accounts_for_existing_exposure():
+    # an existing position already uses part of the 25% cap; the clamp leaves only the headroom
+    st = PortfolioState(equity=10000.0, peak_equity=10000.0, day_start_equity=10000.0,
+                        quote_price=1.0, positions={"ALT/USDT": Position("ALT/USDT", 15.0, 100.0)})
+    # existing value 15*100=1500; cap 2500; headroom 1000 → notional clamped to 1000
+    res = compute_size(pair="ALT/USDT", price=100.0, atr=0.1, state=st, cfg=_cfg(),
+                       market=_ALT_MARKET, atr_stop_mult=2.0, clamp_per_asset=True)
+    assert res.feasible and math.isclose(res.notional, 1000.0, rel_tol=1e-9)
+
+
+def test_clamp_per_asset_skips_when_already_at_cap():
+    # asset already at/over the 25% cap → no headroom → SKIP with per_asset_cap (not a forced trade)
+    st = PortfolioState(equity=10000.0, peak_equity=10000.0, day_start_equity=10000.0,
+                        quote_price=1.0, positions={"ALT/USDT": Position("ALT/USDT", 30.0, 100.0)})
+    res = compute_size(pair="ALT/USDT", price=100.0, atr=0.1, state=st, cfg=_cfg(),
+                       market=_ALT_MARKET, atr_stop_mult=2.0, clamp_per_asset=True)
+    assert not res.feasible and res.reason == "per_asset_cap"
+
+
+def test_clamp_per_asset_never_grows_when_size_under_cap():
+    # when the risk-based size is already under the cap, the clamp changes nothing (tighten-only)
+    common = dict(pair="BTC/USDT", price=10000.0, atr=100.0, state=_state(10000.0),
+                  cfg=_cfg(), market=_LOOSE, atr_stop_mult=2.0)
+    base = compute_size(**common)                       # 2500 notional (= 25%, at the boundary)
+    clamped = compute_size(clamp_per_asset=True, **common)
+    assert (clamped.qty, clamped.notional) == (base.qty, base.notional)
+
+
+def test_clamped_order_is_accepted_by_the_engine_no_per_asset_rejection():
+    # the whole point: a clamped entry passes the engine's per-asset check instead of being rejected
+    from src.risk import engine
+    res = compute_size(pair="ALT/USDT", price=100.0, atr=0.1, state=_state(10000.0),
+                       cfg=_cfg(), market=_ALT_MARKET, atr_stop_mult=2.0, clamp_per_asset=True)
+    ctx = engine.RiskContext(prices={"ALT/USDT": 100.0},
+                             exchange_state={"spot_mode": True, "leverage": 1,
+                                             "margin_disabled": True, "futures_disabled": True,
+                                             "reduce_only_on_exit": True},
+                             market=_ALT_MARKET)
+    decision = engine.validate(res.to_order(), _state(10000.0), _cfg(), ctx)
+    assert decision.approved and "per_asset_cap" not in decision.reasons
 
 
 def test_realized_risk_never_exceeds_cap():

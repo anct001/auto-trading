@@ -27,6 +27,8 @@ RISK_REJECTED = "RiskRejected"
 ORDER_SUBMITTED = "OrderSubmitted"
 FILL_RECEIVED = "FillReceived"
 POSITION_CLOSED = "PositionClosed"
+DAY_ROLLED = "DayRolled"          # daily-limit anchor moved to a new UTC day (§4)
+STOP_TRIGGERED = "StopTriggered"  # simulated exchange-side protective stop filled (paper, §4)
 
 REDACTED = "***REDACTED***"
 

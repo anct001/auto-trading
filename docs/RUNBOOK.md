@@ -1,0 +1,226 @@
+# RUNBOOK.md — operator operations guide
+
+> Step-by-step for the things **only you (the operator) can do** — the gates that are operational,
+> not code. The code paths are built and tested; this ties the existing tooling together into the
+> sequence that actually closes P0→P3 and prepares P4. Authoritative spec: `docs/MASTER_DRIVER.md`;
+> current state: `PROGRESS.md`; orientation: `HANDOFF.md`. Nothing here spends real money.
+
+## 0. Golden rules (never bypass)
+
+- **No real capital before the §14 go-live checklist passes** and you have recorded HUMAN SIGN-OFF.
+- The LLM never places or sizes an order. If Ollama is down, trading is unaffected — never "fix" it
+  by letting the model act.
+- Every limit increase / go-live pauses for explicit human consent. Speed is never a reason to skip.
+- Run everything below from **your own machine** (the cloud build env is geo-blocked from Bybit/
+  Binance — 451/403). bitbank is the trade venue; Bybit is deep-history *research/view* data only.
+
+## 1. One-time environment setup
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+pytest -q          # expect all green
+ruff check .       # expect clean
+
+autotrader init    # optional first-run wizard: writes config/app.toml (your CLI defaults);
+                   # after that a bare `autotrader` uses them (flags still override)
+```
+
+Health check at any time: open **`/status`** on the dashboard (version, phase, config, §14
+pre-flight lights, AI backends). Beginner glossary: **`/help`** (EN/VI).
+
+The console here is cp1258 (Vietnamese); every entrypoint calls `core.console.force_utf8_stdio()`
+so non-ASCII (§, →, —) doesn't crash. If you add a new printing entrypoint, call it too.
+
+**No API keys are needed** for anything in this runbook. Real keys are P4-only, in a git-ignored
+`.env` (never committed, never logged), trade-only + withdrawals-disabled + IP-whitelisted.
+
+## 2. Sanity: one paper tick on the real venue
+
+```bash
+python -m src.dry_run --data-exchange bitbank --pair BTC/JPY --timeframe 1h --iterations 1
+```
+
+Expect a `MarketReceived` + `SignalGenerated` in `events/dry_run.jsonl` (the runner pre-warms a
+rolling buffer because bitbank serves only ~12 closed 1h candles per fetch). No order on a `hold`.
+
+## 3. Signal parity (§8.9) — prove no train/serve skew
+
+Reproduces the live rolling-window decision over real history and diffs it against the full-series
+backtest. Green = identical intents.
+
+```bash
+python scripts/dryrun_parity.py --exchange bitbank --pair BTC/JPY --days 30
+# deeper history (research venue): 
+python scripts/dryrun_parity.py --exchange bybit --pair BTC/USDT --days 365
+```
+
+Expect `rate = 1.0000` (zero mismatches). Re-run this against the **event log** of your long
+dry-run (step 5) to confirm parity holds in production.
+
+## 4. Research an edge (the real go-live blocker)
+
+The current EMA-cross has **no validated edge** (−22% / 2.5y). TA, cross-sectional momentum, and
+regime filtering all fail the deflated-Sharpe gate (`docs/research/strategy_search_findings.md`).
+Until something clears **DSR ≥ 0.95 AND beats buy-and-hold**, go-live stays correctly blocked.
+
+```bash
+# TA / cross-sectional / regime families:
+python scripts/strategy_search.py --exchange bybit --pair BTC/USDT --timeframe 1h --days 730
+# a3 — funding-rate carry (a different information source; needs a perp for funding):
+python scripts/funding_edge_search.py --exchange bybit --pair BTC/USDT \
+    --perp BTC/USDT:USDT --timeframe 1h --days 730
+```
+
+Read the printed table honestly: a green `VALIDATED` line is the first real edge, not a foregone
+conclusion. If nothing validates, that is the correct, expected result — do **not** lower the DSR
+bar or curve-fit to force a pass (§5 punishes exactly that).
+
+## 4b. Fast historical replay (dry-run over the past — a same-day smoke)
+
+Before committing to the ≥30-day *forward* run (step 5), replay the paper loop over **past** data to
+shake out the whole path (loop → risk → broker → protective stop → event log) in seconds. It uses
+the exact live order path, just stepping a synthetic clock over history — causal (each tick sees
+only candles closed by that step), no sleeping, no real capital.
+
+```bash
+# fetch REAL past data of the coin and replay it (add --serve-ui to browse the result after):
+python -m src.dry_run --data-exchange bybit --pair BTC/USDT --timeframe 1h \
+    --replay-days 365 --equity 10000
+
+# fetch once + SAVE, so you can replay the same real history later — offline & reproducible:
+python -m src.dry_run --data-exchange kucoin --pair BTC/USDT --timeframe 1h \
+    --replay-days 365 --save-history data/btc_usdt_1h.parquet
+python -m src.dry_run --pair BTC/USDT --timeframe 1h \
+    --replay-file data/btc_usdt_1h.parquet          # no network; identical every run
+```
+
+**Multi-pair comparison + cross-coin assistant** — replay several coins and compare them visually:
+
+```bash
+python -m src.dry_run --data-exchange kucoin --pairs "BTC/USDT,ETH/USDT,SOL/USDT" \
+    --replay-days 30 --serve-ui
+# then open http://127.0.0.1:8787/replay — a sortable, threshold-coloured metrics table (return /
+# win% / PF / max-DD / Calmar / Sharpe / Sortino / VaR95 / CVaR95 / Monte-Carlo DD p95+p99 /
+# avg-exposure / time-in-market / final equity per coin), a pair selector with an equity mini-chart
+# + trades, and a read-only AI assistant scoped to ALL pairs.
+```
+
+**Strategy comparison on ONE coin** — pit EMA / RSI / Donchian / Funding against each other:
+
+```bash
+python -m src.dry_run --data-exchange kucoin --pair BTC/USDT \
+    --strategies "ema,rsi,donchian,funding" --replay-days 60 --serve-ui
+# /replay now compares strategies (rows = strategy) on that coin, same metric columns; the
+# assistant answers "which strategy did best and why?". Runs via the §8 backtest engine;
+# FundingCarry gets a causally-aligned funding column (needs a perp; default <pair>:USDT, or --perp).
+```
+
+Uses the coin's **real** OHLCV (from `--data-exchange`, or a stored `.parquet`/`.csv`). Prints
+ticks / closed trades / final equity / return and writes the event log. It is a smoke of the
+*pipeline*, not an edge claim — dry-run fills are optimistic (§2) and the EMA-cross has no edge; for
+a statistically honest read use the backtest + DSR tooling (step 4), not replay P&L.
+
+> Note: the live loop sizes with `clamp_per_asset=True`, so inverse-ATR sizing is capped to the 25%
+> per-asset headroom and entries land feasibly (no more futile `per_asset_cap` rejections). The
+> clamp is strictly tightening — the engine still disposes. (`compute_size` defaults the clamp off,
+> so the P0 backtest path is unchanged.)
+
+## 5. The ≥30-day forward dry-run (P3 gate)
+
+Run the paper loop continuously for **≥30 days**, no crash, with the operator dashboard up:
+
+```bash
+# writes (manual order / kill-switch) protected by a token if the UI is reachable off localhost:
+export UI_AUTH_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsafe(24))')"
+python -m src.dry_run --data-exchange bitbank --pair BTC/JPY --timeframe 1h \
+    --iterations 0 --serve-ui --ui-port 8787 --alert-webhook "<your Telegram/Slack URL>"
+```
+
+- Dashboard: `http://127.0.0.1:8787/` (also `/markets` `/coin` `/orders` `/chat` `/terminal` `/pro`).
+- A per-tick error (network blip) is caught, recorded as `last_error`, and skipped — the loop keeps
+  running (this is what makes ≥30 days survivable). If it ever exits, that's a P3-gate failure —
+  capture the log and debug before restarting the clock.
+- After the run, re-run **step 3 parity** against the produced event log.
+
+## 6. Restart-safety (§9) — kill mid-trade, expect clean recovery
+
+While a paper position is open, hard-kill the process, then restart it. Confirm via the event log +
+`execution/reconcile` that: the exchange-side protective stop is still present (no naked position),
+no order is double-submitted (idempotent client-order-id + reconcile), and local state matches
+exchange truth. This is a required §14 item ("kill mid-trade → clean recovery, no double-trade").
+
+## 7. Optional: local LLM (P1 sentiment + P2 hypotheses + the /chat assistant)
+
+All LLM features are **off the trading path** and fail-soft; skip this entirely and trading is
+unaffected. To enable:
+
+```bash
+# install Ollama (see ollama.com), then:
+ollama serve &
+ollama pull llama3.1
+```
+
+- **P1 sentiment ablation:** run the slow loop to produce `sentiment_state.json`, then run parallel
+  ≥30-day dry-runs feature-on vs feature-off. Keep `sentiment_floor = 1.0` in
+  `config/risk/default.json` until it *demonstrably* helps forward; only then lower it (≥0.5) and
+  **re-lock the config** (§8, §15). Never backtest the feature (look-ahead, §6).
+- **P2 hypotheses:** run the offline proposer → **you approve each** → `validate_hypothesis` on real
+  bitbank BTC/JPY → clear the gate with ≥1 net-of-cost+tax edge surviving the §5 correction.
+- **/chat assistant:** `--serve-ui` already wires it (`--chat-model llama3.1`). Read-only — it
+  explains state, never trades.
+  - **Backends:** `ollama` (default, **local, data never leaves**), or opt-in **cloud** `anthropic`
+    / `openai` / `gemini`. Cloud providers **send the dashboard snapshot off-machine** and need an
+    API key from the environment only (never a flag): `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` /
+    `GEMINI_API_KEY`. Set as many keys as you like — every provider with a key appears in a
+    **dropdown on the `/chat` (and `/replay`) page**, so you can switch AI per question at runtime
+    without restarting. `--chat-provider` sets the default; `--chat-base-url` targets any
+    OpenAI-compatible endpoint. Keys are held as masked secrets, never logged. Example:
+    `ANTHROPIC_API_KEY=… OPENAI_API_KEY=… python -m src.dry_run --serve-ui --chat-provider anthropic`.
+    (Adding another provider = one entry in `llm.chat.CHAT_PROVIDERS` + a `build_chat_client` branch.)
+
+## 8. Config integrity (§15) — after any intentional config change
+
+`config/config.lock.json` hash-locks the declarative configs. After an intentional change:
+
+```bash
+python -c "from src.core.config import build_manifest, write_manifest; \
+  import pathlib; root=pathlib.Path('.'); \
+  write_manifest(build_manifest([root/'config/risk/default.json', \
+    root/'config/strategy/ema_cross.json', root/'config/backtest/costs.json']), \
+    root/'config/config.lock.json')"
+pytest -q   # the lock test must pass (catches unlocked drift)
+```
+
+Re-locking is a deliberate act with human sign-off — never automate it into a hook.
+
+## 9. Go-live pre-flight (§14) — the gate, not the trigger
+
+```bash
+python scripts/go_live_preflight.py                                   # the report
+python scripts/go_live_preflight.py --list-slugs                      # sign-off vocabulary
+python scripts/go_live_preflight.py --sign forward-dry-run --operator "Your Name"
+```
+
+Auto-checks (config lock, leverage=0, sentiment_floor=1.0, kill-switch, no secret in `.env.example`)
+plus the operator-only §14 items. Each operator item has a stable slug; when you have **genuinely
+done** the gated work, record your sign-off with `--sign <slug> --operator <name>` — it lands in
+`ops/signoff.json` as who/when and the item flips MANUAL → SIGNED on the report and `/status`.
+Signing records, it never verifies: the registry is your word as the human partner (Inv 5), so
+never sign ahead of the work. `is_ready` stays **False** until every auto-check passes AND all 13
+items are signed — including `human-signoff` last. Placing no orders, it never moves money — it
+only tells you the truth about readiness. When (and only when) it is green, P4 begins with the
+smallest meaningful capital, spot-only, no leverage.
+
+## Quick reference
+
+| Goal | Command |
+|------|---------|
+| Install + verify | `pip install -e ".[dev]" && pytest -q && ruff check .` |
+| One paper tick | `python -m src.dry_run --data-exchange bitbank --pair BTC/JPY --iterations 1` |
+| Replay past data | `python -m src.dry_run --data-exchange bybit --pair BTC/USDT --replay-days 365` |
+| Signal parity | `python scripts/dryrun_parity.py --exchange bitbank --pair BTC/JPY --days 30` |
+| TA edge search | `python scripts/strategy_search.py --exchange bybit --pair BTC/USDT --days 730` |
+| Funding edge search | `python scripts/funding_edge_search.py --exchange bybit --pair BTC/USDT --perp BTC/USDT:USDT --days 730` |
+| Long dry-run + UI | `python -m src.dry_run --data-exchange bitbank --pair BTC/JPY --iterations 0 --serve-ui` |
+| Go-live pre-flight | `python scripts/go_live_preflight.py` |

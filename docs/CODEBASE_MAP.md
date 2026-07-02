@@ -33,6 +33,7 @@ autonomous-crypto-trading-agent/
 │   │   └── clock.py              # NTP / skew reject (§9)
 │   ├── data/                     # §2 data layer
 │   │   ├── feed.py               # ccxt OHLCV fetch
+│   │   ├── funding.py            # §8 perp funding-rate history + causal align (research signal)
 │   │   ├── store.py              # parquet store
 │   │   └── quality.py            # §8 data-quality gate (bad/dup ts, ≤0 price, spikes, vol)
 │   ├── features/                 # §15 single feature path (backtest AND live share this)
@@ -41,6 +42,7 @@ autonomous-crypto-trading-agent/
 │   ├── strategy/                 # §5 strategies — deterministic, declare target regime
 │   │   ├── base.py               # interface (emits intent, never sizes)
 │   │   ├── ema_cross.py          # the "deliberately dumb" first strategy
+│   │   ├── funding_carry.py      # §5 funding-rate carry (spot long-or-flat; contrarian to crowd)
 │   │   ├── shadow.py             # §15 shadow-mode harness (hypothetical P&L, never trades)
 │   │   └── regime.py             # §5 deterministic regime gate + regime_state.json I/O
 │   ├── risk/                     # §4 RISK ENGINE — first-class; the single gate (Invariant 3)
@@ -60,12 +62,13 @@ autonomous-crypto-trading-agent/
 │   │   ├── sentiment.py          # bounded size-haircut (FLOOR ≥ 0.5; default 1.0 = off) + state model
 │   │   ├── state_io.py           # sentiment_state.json read/write (TTL, fail-to-neutral)
 │   │   ├── journal.py            # §15 hypothesis journal + count_trials (§5 denominator)
-│   │   └── hypothesis_gen.py     # offline LLM hypothesis proposer (human-gated, strict param budget)
+│   │   ├── hypothesis_gen.py     # offline LLM hypothesis proposer (human-gated, strict param budget)
+│   │   └── chat.py               # READ-ONLY operator assistant (explains state; imports no order path — Inv 1)
 │   ├── events/                   # §15 append-only event log (immutable, secret-redacted)
 │   │   └── log.py
 │   └── ui/                       # §12 operator surfaces (read-only + kill-switch + gated order)
 │       ├── api.py                # JSON service layer (dashboard/preview/kill-switch payloads)
-│       ├── server.py             # stdlib-http transport: pure router + dashboard/markets/coin/orders pages + demo
+│       ├── server.py             # stdlib-http transport: pure router + dashboard/markets/coin/orders/chat pages + demo
 │       ├── live.py               # OperatorContext over a LIVE DryRunner (dry_run.py --serve-ui)
 │       ├── preview.py            # manual-order pre-trade risk preview (runs the exact engine, Inv 9)
 │       ├── dashboard/model.py    # read-only §12 control-dashboard model (equity/limits/exposure/log)
@@ -73,7 +76,8 @@ autonomous-crypto-trading-agent/
 │       ├── markets.py            # markets overview/watchlist + heatmap
 │       ├── coin_detail.py        # K-line candles + EMA overlays + readouts
 │       ├── orderbook.py          # order-book depth view (cumulative, spread)
-│       └── orders_panel.py       # order & trade panel read model (attempts/submitted/fills)
+│       ├── orders_panel.py       # order & trade panel read model (attempts/submitted/fills)
+│       └── replay_dashboard.py   # multi-pair dry-run/replay comparison model (metrics table)
 ├── backtest/                     # §8 harness
 │   ├── runner.py                 # deterministic backtest (P0); Freqtrade at P3 — ADR/PLAN
 │   ├── metrics.py                # §8.7 metric suite (CAGR/Calmar/Sharpe/Sortino…) + sample gate

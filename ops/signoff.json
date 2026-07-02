@@ -1,0 +1,4 @@
+{
+  "_comment": "§14 go-live sign-off registry. NEVER pre-fill: each entry is recorded by the human operator via `python scripts/go_live_preflight.py --sign <slug> --operator <name>` only AFTER the gated work is genuinely done (Inv 4/5). Slugs: --list-slugs.",
+  "signoffs": {}
+}

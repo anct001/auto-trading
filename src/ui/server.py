@@ -38,6 +38,11 @@ class OperatorContext:
     orderbook: Callable[[str], dict] | None = None  # pair -> order-book depth view
     agentview: Callable[[str], dict] | None = None  # pair -> agent-view overlay (signal/regime/sentiment)
     trades_tape: Callable[[str], dict] | None = None  # pair -> recent public market trades (tape)
+    chat: Callable[[dict], dict] | None = None  # body{question,provider?} -> {answer,error} READ-ONLY (Inv 1)
+    chat_providers: Callable[[], dict] | None = None  # () -> {default, providers:[{name,model,default}]}
+    status: Callable[[], dict] | None = None  # () -> core.status.gather_status() payload (health lights)
+    replay: Callable[[], dict] | None = None  # () -> multi-pair replay comparison model; None = no replay view
+    auth_token: str | None = None  # if set, mutating writes require a matching X-Auth-Token; None = open (localhost)
 
 
 @dataclass(frozen=True)
@@ -47,21 +52,135 @@ class Response:
     content_type: str = "application/json"
 
 
-def handle_request(method: str, path: str, body: dict | None, ctx: OperatorContext) -> Response:
+# ---- shared page chrome: one nav bar + favicon across every operator page (§12 polish) --------
+
+_NAV_LINKS = [("/", "Dashboard"), ("/markets", "Markets"), ("/coin", "Coin"),
+              ("/orders", "Orders"), ("/replay", "Replay"), ("/terminal", "Terminal"),
+              ("/pro", "Pro"), ("/chat", "Assistant"), ("/status", "Status"), ("/help", "Help")]
+
+_NAV_CSS = """
+ .topnav{display:flex;align-items:center;gap:13px;background:#12151b;border:1px solid #1f2530;
+  border-radius:8px;padding:8px 14px;margin:0 0 14px;font-size:13px;flex-wrap:wrap}
+ .topnav .brand{font-weight:600;color:#e8ecf2;margin-right:4px;letter-spacing:.3px}
+ .topnav .tag{background:#274d33;color:#7fe0a1;font-size:10px;padding:2px 7px;border-radius:9px;
+  margin-left:6px;letter-spacing:.6px}
+ .topnav a{color:#8b93a1;text-decoration:none;padding:3px 1px;border-bottom:2px solid transparent}
+ .topnav a:hover{color:#d7dbe0} .topnav a.active{color:#6ea8fe;border-bottom-color:#6ea8fe}
+ body.light .topnav{background:#fff;border-color:#d9dee5} body.light .topnav .brand{color:#222}
+ body.light .topnav a{color:#667} body.light .topnav a:hover{color:#123}"""
+
+# inline SVG favicon (no file, no CDN): a green candle glyph on the dark card colour
+_FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    '<rect width="32" height="32" rx="7" fill="#12151b"/>'
+    '<rect x="7" y="12" width="5" height="11" rx="1" fill="#f06a6a"/>'
+    '<rect x="9" y="8" width="1.6" height="19" fill="#f06a6a"/>'
+    '<rect x="19" y="7" width="5" height="12" rx="1" fill="#46d17f"/>'
+    '<rect x="21" y="4" width="1.6" height="20" fill="#46d17f"/></svg>')
+
+
+def _nav(active: str = "") -> str:
+    parts = []
+    for p, label in _NAV_LINKS:
+        cls = ' class="active"' if p == active else ""
+        parts.append(f'<a href="{p}"{cls}>{label}</a>')
+    return ('<nav class="topnav"><span class="brand">📈 AutoTrader'
+            '<span class="tag">PAPER</span></span>' + "".join(parts) + "</nav>")
+
+
+def _with_nav(html: str, active: str = "") -> str:
+    """Inject the shared top-nav + its CSS into a page template (idempotent per page)."""
+    return (html.replace("</style>", _NAV_CSS + "\n</style>", 1)
+                .replace("<body>", "<body>" + _nav(active), 1))
+
+
+# mutating write endpoints — these can place an order or halt/resume trading, so when an auth
+# token is configured they must present it. Read endpoints (GET) and the read-only POSTs
+# (/api/preview, /api/chat) stay open under the localhost assumption; the token exists to stop a
+# non-operator from reaching the *dangerous* writes if the surface is ever exposed off localhost.
+_PROTECTED_WRITES = frozenset({
+    "/api/order", "/api/killswitch/engage", "/api/killswitch/rearm",
+    "/api/chat",  # read-only, but a cloud provider call burns the operator's API credits
+})
+
+
+def _same_site(headers: dict | None) -> bool:
+    """CSRF guard: browsers attach an Origin header to POSTs. A cross-site page cannot read our
+    responses, but it CAN fire state-changing requests — so any POST whose Origin is not this
+    localhost UI is rejected. Non-browser clients (curl, tests, scripts) send no Origin → allowed."""
+    if not headers:
+        return True
+    origin = headers.get("Origin") or headers.get("origin")
+    if not origin:
+        return True
+    from urllib.parse import urlsplit
+    host = (urlsplit(origin).hostname or "").lower()
+    return host in ("127.0.0.1", "localhost", "::1")
+
+
+def _auth_ok(path: str, ctx: OperatorContext, headers: dict | None) -> bool:
+    """True if the request may proceed: no token configured, or a matching X-Auth-Token present."""
+    if not ctx.auth_token or path not in _PROTECTED_WRITES:
+        return True
+    supplied = ""
+    if headers:
+        # HTTP headers are case-insensitive; check the common spellings
+        supplied = (headers.get("X-Auth-Token") or headers.get("x-auth-token") or "")
+    return _consteq(str(supplied), ctx.auth_token)
+
+
+def _consteq(a: str, b: str) -> bool:
+    """Constant-time-ish string compare (avoid leaking token length/prefix via timing)."""
+    import hmac
+    return hmac.compare_digest(a, b)
+
+
+def handle_request(method: str, path: str, body: dict | None, ctx: OperatorContext,
+                   headers: dict | None = None) -> Response:
     """Route one request. Pure: no I/O. See module docstring for the §12 contract."""
     parts = urlsplit(path)
     query = parse_qs(parts.query)
     path = parts.path.rstrip("/") or "/"
 
+    if method == "POST" and not _same_site(headers):
+        return Response(403, {"error": "cross-site request rejected"})
+
+    if not _auth_ok(path, ctx, headers):
+        return Response(401, {"error": "missing or invalid auth token"})
+
+    if path == "/favicon.ico":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, _FAVICON_SVG, content_type="image/svg+xml")
+
+    if path == "/help":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, _with_nav(help_html(), "/help"), content_type="text/html; charset=utf-8")
+
+    if path == "/status":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, _with_nav(status_html(), "/status"), content_type="text/html; charset=utf-8")
+
+    if path == "/api/status":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        if ctx.status is not None:
+            return Response(200, ctx.status())
+        from src.core.paths import repo_root
+        from src.core.status import gather_status  # default: gather from the repo root
+        return Response(200, gather_status(root=repo_root()))
+
     if path == "/":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
-        return Response(200, index_html(), content_type="text/html; charset=utf-8")
+        return Response(200, _with_nav(index_html(), "/"), content_type="text/html; charset=utf-8")
 
     if path == "/coin":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
-        return Response(200, coin_detail_html(), content_type="text/html; charset=utf-8")
+        return Response(200, _with_nav(coin_detail_html(), "/coin"), content_type="text/html; charset=utf-8")
 
     if path == "/api/coin":
         if method != "GET":
@@ -91,7 +210,7 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
     if path == "/orders":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
-        return Response(200, orders_html(), content_type="text/html; charset=utf-8")
+        return Response(200, _with_nav(orders_html(), "/orders"), content_type="text/html; charset=utf-8")
 
     if path == "/api/orders":
         if method != "GET":
@@ -112,7 +231,7 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
     if path == "/markets":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
-        return Response(200, markets_html(), content_type="text/html; charset=utf-8")
+        return Response(200, _with_nav(markets_html(), "/markets"), content_type="text/html; charset=utf-8")
 
     if path == "/api/markets":
         if method != "GET":
@@ -124,6 +243,19 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
             return Response(405, {"error": "read-only endpoint"})
         return Response(200, ctx.dashboard())
 
+    if path == "/api/trades.csv":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        import csv
+        import io
+        cols = ["exit_time", "pair", "qty", "entry_price", "exit_price", "return", "pnl"]
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+        w.writeheader()
+        for t in ctx.dashboard().get("trades") or []:
+            w.writerow({c: t.get(c, "") for c in cols})
+        return Response(200, buf.getvalue(), content_type="text/csv; charset=utf-8")
+
     if path == "/metrics":
         if method != "GET":
             return Response(405, {"error": "read-only endpoint"})
@@ -134,14 +266,53 @@ def handle_request(method: str, path: str, body: dict | None, ctx: OperatorConte
     if path == "/api/preview":
         if method != "POST":
             return Response(405, {"error": "use POST"})
-        return Response(200, ctx.preview(body or {}))
+        try:
+            return Response(200, ctx.preview(body or {}))
+        except (ValueError, TypeError) as e:
+            return Response(400, {"error": f"invalid request body: {e}"})
 
     if path == "/api/order":
         if method != "POST":
             return Response(405, {"error": "use POST"})
         if ctx.place is None:
             return Response(404, {"error": "manual order placing not enabled"})
-        return Response(200, ctx.place(body or {}))
+        try:
+            return Response(200, ctx.place(body or {}))
+        except (ValueError, TypeError) as e:
+            return Response(400, {"error": f"invalid request body: {e}"})
+
+    if path == "/replay":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, _with_nav(replay_html(), "/replay"), content_type="text/html; charset=utf-8")
+
+    if path == "/api/replay":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, ctx.replay() if ctx.replay else {"table": [], "pairs": []})
+
+    if path == "/chat":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, _with_nav(chat_html(), "/chat"), content_type="text/html; charset=utf-8")
+
+    if path == "/api/chat/providers":
+        if method != "GET":
+            return Response(405, {"error": "read-only endpoint"})
+        return Response(200, ctx.chat_providers() if ctx.chat_providers
+                        else {"default": "ollama", "providers": []})
+
+    if path == "/api/chat":
+        # POST carries the operator's question, but the assistant is strictly READ-ONLY (Inv 1):
+        # it explains state and cannot place orders or change anything. It reads no UI write path.
+        if method != "POST":
+            return Response(405, {"error": "use POST"})
+        if ctx.chat is None:
+            return Response(404, {"error": "chat assistant not enabled"})
+        try:
+            return Response(200, ctx.chat(body or {}))
+        except (ValueError, TypeError) as e:
+            return Response(400, {"error": f"invalid request body: {e}"})
 
     if path == "/api/killswitch/engage":
         if method != "POST":
@@ -198,19 +369,21 @@ def index_html() -> str:
  body.light th,body.light td{border-color:#e5e8ee} body.light .bar{background:#e5e8ee}
  body.light button{background:#eceef2;color:#1c2230;border-color:#cdd3dd}
 </style></head><body>
-<h1>Operator dashboard <a href="/pro">· pro</a> <a href="/terminal">· terminal</a> <a href="/markets">· markets</a> <a href="/orders">· orders</a> <span id="ks" class="muted"></span></h1>
+<h1>Operator dashboard <span id="ks" class="muted"></span></h1>
 <div class="grid" id="cards"></div>
 <div class="card" style="min-width:100%"><div class="lbl">Equity curve</div><svg id="eq" viewBox="0 0 900 130" preserveAspectRatio="none"></svg></div>
 <div class="grid" id="perf"></div>
 <div class="card" style="min-width:100%"><div class="lbl">Open positions</div><table id="pos"><thead>
 <tr><th>Pair</th><th>Qty</th><th>Value</th><th>Unrealized</th><th>Exposure %</th><th></th></tr></thead><tbody></tbody></table></div>
-<div class="card" style="min-width:100%"><div class="lbl">Closed trades</div><table id="trades"><thead>
+<div class="card" style="min-width:100%"><div class="lbl">Closed trades
+ <a href="/api/trades.csv" download="trades.csv" style="float:right;font-size:11px;color:#6ea8fe">⬇ CSV</a></div><table id="trades"><thead>
 <tr><th>Exit time</th><th>Pair</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Return %</th><th>P&L</th></tr></thead><tbody></tbody></table></div>
 <div class="card" style="min-width:100%"><div class="lbl">Decision log</div><div id="log"></div></div>
 <div style="margin-top:12px"><button class="kill" onclick="engage()">Engage kill-switch</button>
 <button onclick="rearm()">Re-arm</button> <button onclick="toggleTheme()">Theme</button>
 <span id="msg" class="muted"></span></div>
 <script>
+window.fetch=((of)=>async(u,o)=>{o=o||{};if((o.method||"GET").toUpperCase()==="POST"){o.headers=Object.assign({},o.headers,{"X-Auth-Token":localStorage.getItem("uitoken")||""});}let r=await of(u,o);if(r.status===401){const t=prompt("Operator auth token for writes:");if(t){localStorage.setItem("uitoken",t);o.headers=Object.assign({},o.headers,{"X-Auth-Token":t});r=await of(u,o);}}return r;})(window.fetch);
 const COL={ok:"#46d17f",warn:"#e6a23c",bad:"#f06a6a"};
 const fmt=(n)=>typeof n==="number"?n.toLocaleString(undefined,{maximumFractionDigits:4}):n;
 function cls(v,soft,hard){if(v<=hard)return"bad";if(v<=soft)return"warn";return"ok";}
@@ -218,7 +391,7 @@ function gauge(pct,c){pct=Math.max(0,Math.min(100,pct));
  return `<div class="bar"><div class="barfill" style="width:${pct}%;background:${COL[c]}"></div></div>`;}
 function drawEquity(curve){
  const svg=document.getElementById("eq");svg.innerHTML="";const W=900,H=130,pad=8;
- if(!curve||curve.length<2){svg.innerHTML='<text x=12 y=24 fill="#6b7280">accumulating…</text>';return;}
+ if(!curve||curve.length<2){svg.innerHTML='<text x=12 y=24 fill="#6b7280">accumulating — one point per tick/fill…</text>';return;}
  const ys=curve.map(p=>p.equity);const lo=Math.min(...ys),hi=Math.max(...ys);
  const x=i=>pad+i*(W-2*pad)/(curve.length-1),y=v=>H-pad-(v-lo)/((hi-lo)||1)*(H-2*pad);
  const up=ys[ys.length-1]>=ys[0],col=up?COL.ok:COL.bad;
@@ -230,12 +403,15 @@ function render(d){
   const dpl=cls(d.day_return_pct,d.daily_soft_pct,d.daily_hard_pct);
   const ddc=cls(d.drawdown_pct,d.killswitch_pct/2,d.killswitch_pct);
   const grc=d.gross_exposure_pct>d.gross_cap_pct?"bad":(d.gross_exposure_pct>d.gross_cap_pct*0.8?"warn":"ok");
+  // value colour is sign-aware (a loss never shows green); the gauge bar keeps limit-distance colour
+  const dplv=d.day_return_pct>=0?"ok":(dpl==="ok"?"":dpl);
+  const sent=d.sentiment_fresh==null?"off":(d.sentiment_fresh?"fresh":"stale");
   const cards=[
    {l:"Equity",v:fmt(d.equity),c:""},
-   {l:"Day P&L %",v:fmt(d.day_return_pct),c:dpl,g:gauge(Math.abs(Math.min(0,d.day_return_pct))/Math.abs(d.daily_hard_pct)*100,dpl)},
+   {l:"Day P&L %",v:fmt(d.day_return_pct),c:dplv,g:gauge(Math.abs(Math.min(0,d.day_return_pct))/Math.abs(d.daily_hard_pct)*100,dpl)},
    {l:"Drawdown %",v:fmt(d.drawdown_pct),c:ddc,g:gauge(Math.abs(d.drawdown_pct)/Math.abs(d.killswitch_pct)*100,ddc)},
    {l:"Gross exp %",v:fmt(d.gross_exposure_pct),c:grc,g:gauge(d.gross_exposure_pct/d.gross_cap_pct*100,grc)},
-   {l:"Sentiment fresh",v:String(d.sentiment_fresh),c:""}];
+   {l:"Sentiment (P1)",v:sent,c:sent==="stale"?"warn":""}];
   document.getElementById("cards").innerHTML=cards.map(c=>
    `<div class="card"><div class="lbl">${c.l}</div><div class="val ${c.c}">${c.v}</div>${c.g||""}</div>`).join("");
   drawEquity(d.equity_curve);
@@ -253,11 +429,13 @@ function render(d){
   document.getElementById("perf").innerHTML=perf.map(c=>
    `<div class="card"><div class="lbl">${c[0]}</div><div class="val ${c[2]}">${c[1]}</div></div>`).join("");
   document.querySelector("#trades tbody").innerHTML=(d.trades||[]).map(t=>
-   `<tr><td>${(t.exit_time||"").slice(0,19).replace("T"," ")}</td><td>${t.pair}</td><td>${fmt(t.qty)}</td><td>${fmt(t.entry_price)}</td><td>${fmt(t.exit_price)}</td><td class="${t.return>=0?'ok':'bad'}">${(t.return*100).toFixed(3)}</td><td class="${t.pnl>=0?'ok':'bad'}">${fmt(t.pnl)}</td></tr>`).join("")||"<tr><td class=muted>none yet</td></tr>";
+   `<tr><td>${(t.exit_time||"").slice(0,19).replace("T"," ")}</td><td>${t.pair}</td><td>${fmt(t.qty)}</td><td>${fmt(t.entry_price)}</td><td>${fmt(t.exit_price)}</td><td class="${t.return>=0?'ok':'bad'}">${(t.return*100).toFixed(3)}</td><td class="${t.pnl>=0?'ok':'bad'}">${fmt(t.pnl)}</td></tr>`).join("")||"<tr><td class=muted colspan=7>No closed trades yet — a full round-trip (buy → sell) will appear here.</td></tr>";
   document.querySelector("#pos tbody").innerHTML=(d.positions||[]).map(p=>
-   `<tr><td>${p.pair}</td><td>${fmt(p.qty)}</td><td>${fmt(p.value)}</td><td class="${p.unrealized_pnl>=0?'ok':'bad'}">${fmt(p.unrealized_pnl)}</td><td>${fmt(p.exposure_pct)}</td><td><button onclick="flatten('${p.pair}',${p.qty},${p.price})">Flatten</button></td></tr>`).join("")||"<tr><td class=muted>flat</td></tr>";
-  document.getElementById("log").innerHTML=(d.decision_log||[]).map(e=>
-   `<div>${e.timestamp} <b>${e.type}</b> ${e.pair} ${e.detail}</div>`).join("")||"<div class=muted>no events</div>";
+   `<tr><td>${p.pair}</td><td>${fmt(p.qty)}</td><td>${fmt(p.value)}</td><td class="${p.unrealized_pnl>=0?'ok':'bad'}">${fmt(p.unrealized_pnl)}</td><td>${fmt(p.exposure_pct)}</td><td><button onclick="flatten('${p.pair}',${p.qty},${p.price})">Flatten</button></td></tr>`).join("")||"<tr><td class=muted colspan=6>Flat — no open position. The bot only enters on a signal that passes the risk engine.</td></tr>";
+  document.getElementById("log").innerHTML=(d.decision_log||[]).map(e=>{
+   const qy=encodeURIComponent(`Explain this decision: ${e.timestamp} ${e.type} ${e.pair} ${e.detail||""}`);
+   return `<div>${e.timestamp} <b>${e.type}</b> ${e.pair} ${e.detail} <a href="/chat?q=${qy}" title="Ask the assistant to explain">explain</a></div>`;
+  }).join("")||"<div class=muted>No decisions yet — every signal, risk verdict and order is logged here each tick.</div>";
 }
 async function poll(){try{render(await (await fetch("/api/dashboard")).json());}
  catch(e){document.getElementById("msg").textContent="fetch error: "+e;}}
@@ -316,6 +494,7 @@ def terminal_html() -> str:
  <div class="tile" data-tid="agent" style="grid-column:span 3"><div class="t">⠿ Agent view</div><div id="agent"></div><div class="t" style="margin-top:8px">Decision log</div><div id="log" style="font-size:11px"></div></div>
 </div>
 <script>
+window.fetch=((of)=>async(u,o)=>{o=o||{};if((o.method||"GET").toUpperCase()==="POST"){o.headers=Object.assign({},o.headers,{"X-Auth-Token":localStorage.getItem("uitoken")||""});}let r=await of(u,o);if(r.status===401){const t=prompt("Operator auth token for writes:");if(t){localStorage.setItem("uitoken",t);o.headers=Object.assign({},o.headers,{"X-Auth-Token":t});r=await of(u,o);}}return r;})(window.fetch);
 const NS="http://www.w3.org/2000/svg",C={ok:"#3fd07f",bad:"#f06a6a",warn:"#e6a23c"};
 let PAIR=new URLSearchParams(location.search).get("pair")||"BTC/JPY";
 document.getElementById("pair").value=PAIR;
@@ -443,6 +622,7 @@ def pro_html() -> str:
 </div>
 <script src="/static/lightweight-charts.js"></script>
 <script>
+window.fetch=((of)=>async(u,o)=>{o=o||{};if((o.method||"GET").toUpperCase()==="POST"){o.headers=Object.assign({},o.headers,{"X-Auth-Token":localStorage.getItem("uitoken")||""});}let r=await of(u,o);if(r.status===401){const t=prompt("Operator auth token for writes:");if(t){localStorage.setItem("uitoken",t);o.headers=Object.assign({},o.headers,{"X-Auth-Token":t});r=await of(u,o);}}return r;})(window.fetch);
 const NS="http://www.w3.org/2000/svg",C={ok:"#3fd07f",bad:"#f06a6a"};
 let PAIR=new URLSearchParams(location.search).get("pair")||"BTC/USDT",TF="";const TFS=["1h","4h","1d"];
 document.getElementById("pair").value=PAIR;
@@ -524,7 +704,7 @@ def markets_html() -> str:
  #heat{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
  .tile{border-radius:6px;padding:8px;min-width:70px;color:#0f1115;font-weight:600}
 </style></head><body>
-<h1>Markets <a href="/">· dashboard</a></h1>
+<h1>Markets</h1>
 <div class="lbl">Heatmap (size = volume proxy, color = change)</div><div id="heat"></div>
 <table id="ov"><thead><tr><th>Pair</th><th>Close</th><th>Change %</th><th>ATR %</th><th>Trend</th><th>Volume</th></tr></thead><tbody></tbody></table>
 <script>
@@ -551,7 +731,7 @@ def coin_detail_html() -> str:
  h1{font-size:16px;margin:0 0 12px} a{color:#6ea8fe} .lbl{color:#8b93a1;font-size:11px;text-transform:uppercase}
  #ro span{margin-right:16px} svg{background:#171a21;border:1px solid #232833;border-radius:8px}
 </style></head><body>
-<h1>Coin detail: <span id="pair"></span> <span id="tfbtns"></span> <a href="/markets">· markets</a> <a href="/">· dashboard</a></h1>
+<h1>Coin detail: <span id="pair"></span> <span id="tfbtns"></span></h1>
 <div id="agent" style="margin:6px 0 10px;padding:8px 12px;background:#171a21;border:1px solid #232833;border-radius:8px"></div>
 <div id="ro" class="lbl"></div>
 <div id="chart" style="height:380px;border:1px solid #232833;border-radius:8px"></div>
@@ -627,7 +807,7 @@ def orders_html() -> str:
  th:first-child,td:first-child{text-align:left} th{color:#8b93a1;font-size:11px;text-transform:uppercase}
  .ok{color:#46d17f} .bad{color:#f06a6a} .agent{color:#6ea8fe} .manual{color:#e6a23c}
 </style></head><body>
-<h1>Orders &amp; trades <a href="/">· dashboard</a></h1>
+<h1>Orders &amp; trades</h1>
 <h2>Manual order (routes through the risk engine — Inv 9)</h2>
 <div>
  <select id="side"><option>buy</option><option>sell</option></select>
@@ -642,6 +822,7 @@ def orders_html() -> str:
 <h2>Submitted</h2><table id="sub"><thead><tr><th>Time</th><th>Pair</th><th>Side</th><th>Amount</th><th>Client id</th></tr></thead><tbody></tbody></table>
 <h2>Fills</h2><table id="fil"><thead><tr><th>Time</th><th>Pair</th><th>Filled</th></tr></thead><tbody></tbody></table>
 <script>
+window.fetch=((of)=>async(u,o)=>{o=o||{};if((o.method||"GET").toUpperCase()==="POST"){o.headers=Object.assign({},o.headers,{"X-Auth-Token":localStorage.getItem("uitoken")||""});}let r=await of(u,o);if(r.status===401){const t=prompt("Operator auth token for writes:");if(t){localStorage.setItem("uitoken",t);o.headers=Object.assign({},o.headers,{"X-Auth-Token":t});r=await of(u,o);}}return r;})(window.fetch);
 const fmt=(n)=>typeof n==="number"?n.toLocaleString(undefined,{maximumFractionDigits:6}):(n??"");
 function body(){return {side:document.getElementById("side").value,
  qty:parseFloat(document.getElementById("qty").value),
@@ -658,13 +839,363 @@ async function place(){const r=await (await fetch("/api/order",{method:"POST",
  document.getElementById("placeBtn").disabled=true;refresh();}
 async function refresh(){try{const d=await (await fetch("/api/orders")).json();
  document.querySelector("#att tbody").innerHTML=(d.attempts||[]).map(a=>
-  `<tr><td>${a.time}</td><td>${a.pair}</td><td>${a.side}</td><td>${fmt(a.qty)}</td><td class="${a.source}">${a.source}</td><td class="${a.approved?'ok':'bad'}">${a.approved?'passed':'rejected: '+(a.reasons||[]).join(';')}</td></tr>`).join("")||"<tr><td>—</td></tr>";
+  `<tr><td>${a.time}</td><td>${a.pair}</td><td>${a.side}</td><td>${fmt(a.qty)}</td><td class="${a.source}">${a.source}</td><td class="${a.approved?'ok':'bad'}">${a.approved?'passed':'rejected: '+(a.reasons||[]).join(';')}</td></tr>`).join("")||"<tr><td class=muted colspan=6>No order attempts yet — every bot or manual attempt appears here with its risk verdict.</td></tr>";
  document.querySelector("#sub tbody").innerHTML=(d.submitted||[]).map(s=>
-  `<tr><td>${s.time}</td><td>${s.pair}</td><td>${s.side}</td><td>${fmt(s.amount)}</td><td>${s.client_order_id}</td></tr>`).join("")||"<tr><td>—</td></tr>";
+  `<tr><td>${s.time}</td><td>${s.pair}</td><td>${s.side}</td><td>${fmt(s.amount)}</td><td>${s.client_order_id}</td></tr>`).join("")||"<tr><td class=muted colspan=5>None yet — risk-approved orders appear here when submitted.</td></tr>";
  document.querySelector("#fil tbody").innerHTML=(d.fills||[]).map(f=>
-  `<tr><td>${f.time}</td><td>${f.pair}</td><td>${fmt(f.filled)}</td></tr>`).join("")||"<tr><td>—</td></tr>";
+  `<tr><td>${f.time}</td><td>${f.pair}</td><td>${fmt(f.filled)}</td></tr>`).join("")||"<tr><td class=muted colspan=3>None yet — fills appear here once an order executes.</td></tr>";
 }catch(e){}}
 refresh();setInterval(refresh,5000);
+</script></body></html>"""
+
+
+def chat_html() -> str:
+    """Read-only operator chat page (Inv 1). Asks /api/chat; the assistant only explains state.
+
+    Self-contained, no CDN. A persistent banner states the assistant cannot trade, so the operator
+    is never misled into expecting it to act — all trading stays on the deterministic, risk-gated
+    manual controls (/orders) and the kill-switch (/)."""
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Assistant (read-only)</title>
+<style>
+ body{font:14px system-ui,sans-serif;background:#0f1115;color:#d7dbe0;margin:0;padding:16px}
+ h1{font-size:16px;margin:0 0 8px} a{color:#6ea8fe}
+ .banner{background:#2a2030;border:1px solid #4a3a2a;color:#e6a23c;padding:8px 10px;border-radius:6px;margin-bottom:12px;font-size:12px}
+ #log{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+ .msg{padding:8px 10px;border-radius:8px;max-width:80%;white-space:pre-wrap;line-height:1.4}
+ .you{align-self:flex-end;background:#1b3a5b} .bot{align-self:flex-start;background:#1b2230}
+ .meta{font-size:11px;color:#8b93a1;margin-bottom:2px}
+ form{display:flex;gap:8px} input{flex:1;padding:8px;background:#161a20;border:1px solid #232833;color:#d7dbe0;border-radius:6px}
+ button{padding:8px 14px;background:#2c4a6b;color:#fff;border:0;border-radius:6px;cursor:pointer}
+ button:disabled{opacity:.5;cursor:default} .muted{color:#8b93a1}
+ #chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+ .chip{font-size:12px;padding:5px 9px;background:#161a20;border:1px solid #232833;color:#9fb4d6;border-radius:14px;cursor:pointer}
+ .chip:hover{border-color:#2c4a6b} #bar{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+ #clear{background:#2a2230;font-size:12px;padding:5px 9px}
+ .cites{margin-top:6px;border-top:1px solid #232833;padding-top:4px}
+ .cite{font-size:11px;color:#8b93a1;font-family:monospace} .cite b{color:#6ea8fe}
+</style></head><body>
+<h1>Assistant</h1>
+<div class="banner">⚠ Read-only assistant. It explains the bot's current state — it cannot place orders, change
+ limits, or touch the kill-switch. All trading is deterministic and risk-gated.</div>
+<div id="chips"></div>
+<div id="log"></div>
+<div id="bar"><button id="clear" type="button">Clear chat</button>
+ <label class="muted" style="font-size:12px">AI: <select id="prov" style="background:#161a20;color:#d7dbe0;border:1px solid #232833;border-radius:5px;padding:3px"></select></label>
+ <span id="status" class="muted"></span></div>
+<form id="f"><input id="q" placeholder="Ask about equity, positions, why we're flat, the last rejection…" autocomplete="off">
+ <button id="send">Ask</button></form>
+<script>
+window.fetch=((of)=>async(u,o)=>{o=o||{};if((o.method||"GET").toUpperCase()==="POST"){o.headers=Object.assign({},o.headers,{"X-Auth-Token":localStorage.getItem("uitoken")||""});}let r=await of(u,o);if(r.status===401){const t=prompt("Operator auth token for writes:");if(t){localStorage.setItem("uitoken",t);o.headers=Object.assign({},o.headers,{"X-Auth-Token":t});r=await of(u,o);}}return r;})(window.fetch);
+const log=document.getElementById("log"),q=document.getElementById("q"),send=document.getElementById("send");
+const prov=document.getElementById("prov");
+async function loadProviders(){try{const d=await (await fetch("/api/chat/providers")).json();
+ const ps=d.providers||[];prov.innerHTML=ps.map(p=>`<option value="${p.name}"${p.name===d.default?" selected":""}>${p.name} (${p.model})</option>`).join("");
+ if(ps.length<=1)prov.parentElement.style.display="none";}catch(e){prov.parentElement.style.display="none";}}
+loadProviders();
+const SUGGEST=["What's my equity and P&L today?","Why are we flat right now?","What's my drawdown vs the kill-switch?",
+ "Summarize my recent closed trades.","Explain the last risk rejection.","Is the bot healthy?"];
+let hist=[];  // [{role, content}] prior turns, sent for multi-turn context (bounded server-side)
+function add(cls,meta,text){const w=document.createElement("div");w.className="msg "+cls;
+ const m=document.createElement("div");m.className="meta";m.textContent=meta;
+ const b=document.createElement("div");b.textContent=text;w.appendChild(m);w.appendChild(b);
+ log.appendChild(w);w.scrollIntoView();return w;}
+function renderCites(wrap,cites){if(!cites||!cites.length)return;
+ const c=document.createElement("div");c.className="cites";
+ cites.forEach(z=>{const r=document.createElement("div");r.className="cite";
+  r.innerHTML="<b>["+z.ref+"]</b> "+document.createTextNode((z.timestamp||"")+" "+(z.type||"")+" "+(z.pair||"")+" "+(z.detail||"")).textContent;
+  c.appendChild(r);});wrap.appendChild(c);}
+async function ask(text){text=(text||"").trim();if(!text)return;add("you","you",text);
+ q.value="";send.disabled=true;const wrap=add("bot","assistant","…");const body=wrap.lastChild;
+ try{const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
+   body:JSON.stringify({question:text,history:hist,provider:prov.value||undefined})});const j=await r.json();
+  const ans=j.answer||j.error||"(no answer)";body.textContent=ans;renderCites(wrap,j.citations);
+  hist.push({role:"user",content:text});hist.push({role:"assistant",content:ans});
+  if(hist.length>12)hist=hist.slice(-12);
+ }catch(err){body.textContent="error: "+err;}
+ send.disabled=false;q.focus();}
+document.getElementById("f").addEventListener("submit",(e)=>{e.preventDefault();ask(q.value);});
+document.getElementById("clear").addEventListener("click",()=>{hist=[];log.innerHTML="";greet();});
+const chips=document.getElementById("chips");
+SUGGEST.forEach(s=>{const c=document.createElement("span");c.className="chip";c.textContent=s;
+ c.addEventListener("click",()=>ask(s));chips.appendChild(c);});
+function greet(){add("bot","assistant","Ask me about the current state — equity, drawdown, open positions, recent trades, or why the agent is or isn't trading. I remember this conversation; use the chips for quick questions.");}
+greet();
+// deep-link: /chat?q=... (e.g. the "explain" link on a decision-log row) auto-asks on load
+const preset=new URLSearchParams(location.search).get("q");
+if(preset){ask(preset);}
+</script></body></html>"""
+
+
+def replay_html() -> str:
+    """Multi-pair dry-run/replay comparison dashboard (§12, read-only): a sortable metrics table
+    across coins, a pair selector with a per-pair equity mini-chart + trades, and the read-only AI
+    assistant scoped to the whole comparison (analyse/look up across coins). No CDN, no writes."""
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Replay comparison</title>
+<style>
+ body{font:14px system-ui,sans-serif;background:#0f1115;color:#d7dbe0;margin:0;padding:16px}
+ h1{font-size:16px;margin:0 0 6px} h2{font-size:13px;color:#8b93a1;margin:16px 0 6px} a{color:#6ea8fe}
+ .banner{background:#12202c;border:1px solid #24425a;color:#9fc7e6;padding:6px 10px;border-radius:6px;margin-bottom:12px;font-size:12px}
+ table{border-collapse:collapse;width:100%} th,td{text-align:right;padding:5px 10px;border-bottom:1px solid #232833;white-space:nowrap}
+ th:first-child,td:first-child{text-align:left} th{color:#8b93a1;font-size:11px;text-transform:uppercase;cursor:pointer}
+ tr.sel{background:#16202b} tbody tr{cursor:pointer} .ok{color:#46d17f} .bad{color:#f06a6a} .warn{color:#e6a23c}
+ .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px}
+ .card{background:#12151b;border:1px solid #1f2530;border-radius:8px;padding:10px}
+ .chip{font-size:12px;padding:4px 8px;background:#161a20;border:1px solid #232833;color:#9fb4d6;border-radius:12px;cursor:pointer;margin:2px}
+ #chatlog{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto;margin:6px 0}
+ .msg{padding:6px 9px;border-radius:8px;max-width:90%;white-space:pre-wrap;line-height:1.35}
+ .you{align-self:flex-end;background:#1b3a5b} .bot{align-self:flex-start;background:#1b2230}
+ input{flex:1;padding:7px;background:#161a20;border:1px solid #232833;color:#d7dbe0;border-radius:6px}
+ button{padding:7px 12px;background:#2c4a6b;color:#fff;border:0;border-radius:6px;cursor:pointer}
+ .kpi{font-size:12px;color:#8b93a1} .kpi b{color:#d7dbe0;font-size:15px}
+</style></head><body>
+<h1><span id="hdr">Replay comparison</span></h1>
+<div class="banner">Read-only. Replay P&amp;L is optimistic (§2) and the dumb strategies have no validated edge —
+ use it to compare pipeline behaviour across coins, not as an edge claim. The assistant explains this data; it cannot trade.</div>
+<h2>Comparison (click a column to sort, a row to inspect)</h2>
+<table id="tbl"><thead><tr>
+ <th data-k="pair" id="th0">Pair</th>
+ <th data-k="trades" title="Number of closed round-trip trades">Trades</th>
+ <th data-k="win_rate" title="Share of closed trades that made money">Win%</th>
+ <th data-k="profit_factor" title="Gross profit ÷ gross loss. >1 = profitable overall; ∞ = no losing trade">PF</th>
+ <th data-k="total_return" title="Final equity vs starting equity">Return</th>
+ <th data-k="max_drawdown" title="Worst peak-to-trough fall of equity">MaxDD</th>
+ <th data-k="calmar" title="Return ÷ |max drawdown| — reward per unit of worst pain. Higher is better">Calmar</th>
+ <th data-k="sharpe" title="Average return ÷ volatility. Rewards steady gains">Sharpe</th>
+ <th data-k="sortino" title="Like Sharpe but only punishes downside swings">Sortino</th>
+ <th data-k="var95" title="Worst-5% single-tick loss (Value at Risk)">VaR95</th>
+ <th data-k="cvar95" title="Average of the worst-5% losses — the honest tail number">CVaR95</th>
+ <th data-k="mc_dd_p95" title="Monte-Carlo drawdown, 95%-worst reshuffle of the returns">DD95</th>
+ <th data-k="mc_dd_p99" title="Monte-Carlo drawdown, 99%-worst reshuffle (deeper tail)">DD99</th>
+ <th data-k="avg_exposure" title="Average share of equity deployed in positions">Exp%</th>
+ <th data-k="time_in_market" title="Share of time holding any position">TiM%</th>
+ <th data-k="final_equity" title="Equity at the end of the replay">Final eq</th></tr></thead><tbody></tbody></table>
+<p class="kpi">Hover a column header for what it means — full glossary on <a href="/help">Help</a>.</p>
+
+<div class="grid">
+ <div class="card"><h2 id="detTitle">Select a pair</h2><div id="kpis" class="kpi"></div>
+  <svg id="eq" width="100%" height="130" viewBox="0 0 400 130" preserveAspectRatio="none"></svg>
+  <h2>Trades</h2><table id="trades"><thead><tr><th>Exit</th><th>Return</th><th>P&amp;L</th></tr></thead><tbody></tbody></table>
+ </div>
+ <div class="card"><h2>Assistant — analyse across coins <label class="kpi" style="float:right">AI: <select id="prov" style="background:#161a20;color:#d7dbe0;border:1px solid #232833;border-radius:5px;padding:2px"></select></label></h2>
+  <div id="chips"></div><div id="chatlog"></div>
+  <form id="cf" style="display:flex;gap:6px"><input id="q" placeholder="e.g. which coin did best and why? compare BTC vs ETH"><button>Ask</button></form>
+ </div>
+</div>
+<script>
+window.fetch=((of)=>async(u,o)=>{o=o||{};if((o.method||"GET").toUpperCase()==="POST"){o.headers=Object.assign({},o.headers,{"X-Auth-Token":localStorage.getItem("uitoken")||""});}let r=await of(u,o);if(r.status===401){const t=prompt("Operator auth token for writes:");if(t){localStorage.setItem("uitoken",t);o.headers=Object.assign({},o.headers,{"X-Auth-Token":t});r=await of(u,o);}}return r;})(window.fetch);
+let DATA=null, SORT={k:"total_return",dir:-1}, SEL=null, hist=[];
+const pct=(x)=>(x==null?"—":((x*100).toFixed(2)+"%")), pf=(x)=>x==null?"∞":(typeof x==="number"?x.toFixed(2):"—");
+const cls=(x)=>x>=0?"ok":"bad";
+const pfcls=(x)=>(x==null||x>=1)?"ok":"bad";            // profit factor: >=1 (or ∞) good
+// loss metric (negative; deeper = worse): amber past warn, red past bad
+const loss=(x,warn,bad)=>x==null?"":(x<=bad?"bad":(x<=warn?"warn":""));
+async function load(){DATA=await (await fetch("/api/replay")).json();
+ document.getElementById("th0").textContent=DATA.label||"Pair";
+ if(DATA.dimension==="strategy"&&DATA.coin){document.getElementById("hdr").textContent=
+   "Strategy comparison on "+DATA.coin;}
+ renderTable();
+ if((DATA.table||[]).length){select((DATA.best_pair)||DATA.table[0].pair);} }
+function renderTable(){const rows=[...(DATA.table||[])].sort((a,b)=>{const v=(a[SORT.k]>b[SORT.k]?1:-1)*SORT.dir;return v;});
+ document.querySelector("#tbl tbody").innerHTML=rows.map(r=>`<tr data-p="${r.pair}" class="${r.pair===SEL?'sel':''}">
+  <td>${r.pair}</td><td>${r.trades}</td><td>${(r.win_rate*100).toFixed(0)}</td>
+  <td class="${pfcls(r.profit_factor)}">${pf(r.profit_factor)}</td>
+  <td class="${cls(r.total_return)}">${pct(r.total_return)}</td>
+  <td class="${loss(r.max_drawdown,-0.05,-0.10)}">${pct(r.max_drawdown)}</td>
+  <td class="${cls(r.calmar)}">${(r.calmar||0).toFixed(2)}</td><td class="${cls(r.sharpe)}">${(r.sharpe||0).toFixed(3)}</td>
+  <td class="${cls(r.sortino)}">${(r.sortino||0).toFixed(3)}</td>
+  <td class="${loss(r.var95,-0.01,-0.03)}">${pct(r.var95)}</td><td class="${loss(r.cvar95,-0.01,-0.03)}">${pct(r.cvar95)}</td>
+  <td class="${loss(r.mc_dd_p95,-0.10,-0.20)}">${pct(r.mc_dd_p95)}</td><td class="${loss(r.mc_dd_p99,-0.10,-0.20)}">${pct(r.mc_dd_p99)}</td>
+  <td class="${(r.avg_exposure>0.9)?'warn':''}">${((r.avg_exposure||0)*100).toFixed(0)}</td>
+  <td>${((r.time_in_market||0)*100).toFixed(0)}</td>
+  <td>${(r.final_equity||0).toFixed(0)}</td></tr>`).join("")
+  ||'<tr><td colspan=15 class=kpi>no replay data — run: python -m src.dry_run --replay-days N --pairs A,B,C</td></tr>';
+ document.querySelectorAll("#tbl tbody tr").forEach(tr=>tr.onclick=()=>tr.dataset.p&&select(tr.dataset.p));}
+document.querySelectorAll("#tbl thead th").forEach(th=>th.onclick=()=>{const k=th.dataset.k;
+ SORT=(SORT.k===k)?{k,dir:-SORT.dir}:{k,dir:-1};renderTable();});
+function select(p){SEL=p;const d=(DATA.detail||{})[p];renderTable();if(!d)return;
+ document.getElementById("detTitle").textContent=p;
+ document.getElementById("kpis").innerHTML=`<b>${pct(d.total_return)}</b> return · <b>${d.performance.trade_count}</b> trades ·
+  win <b>${(d.performance.win_rate*100).toFixed(0)}%</b> · maxDD <b>${pct(d.max_drawdown)}</b> · final <b>${(d.final_equity||0).toFixed(0)}</b>`;
+ drawEq((d.equity_curve||[]).map(e=>e.equity));
+ document.querySelector("#trades tbody").innerHTML=(d.trades||[]).slice(-40).reverse().map(t=>
+  `<tr><td>${(t.exit_time||"").slice(0,19).replace("T"," ")}</td><td class="${cls(t.return)}">${((t.return||0)*100).toFixed(2)}%</td>
+   <td class="${cls(t.pnl)}">${(t.pnl||0).toFixed(2)}</td></tr>`).join("")||"<tr><td class=kpi>no trades</td></tr>";}
+function drawEq(v){const el=document.getElementById("eq");if(!v||v.length<2){el.innerHTML="";return;}
+ const mn=Math.min(...v),mx=Math.max(...v),rng=(mx-mn)||1;
+ const pts=v.map((y,i)=>`${(i/(v.length-1)*400).toFixed(1)},${(120-(y-mn)/rng*110).toFixed(1)}`).join(" ");
+ el.innerHTML=`<polyline fill="none" stroke="#6ea8fe" stroke-width="1.5" points="${pts}"/>`;}
+// assistant (multi-pair; read-only)
+function add(c,m,t){const w=document.createElement("div");w.className="msg "+c;const h=document.createElement("div");
+ h.style.cssText="font-size:11px;color:#8b93a1";h.textContent=m;const b=document.createElement("div");b.textContent=t;
+ w.appendChild(h);w.appendChild(b);document.getElementById("chatlog").appendChild(w);w.scrollIntoView();return b;}
+async function ask(text){text=(text||"").trim();if(!text)return;add("you","you",text);const q=document.getElementById("q");q.value="";
+ const b=add("bot","assistant","…");try{const pv=document.getElementById("prov");
+  const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({question:text,history:hist,provider:(pv&&pv.value)||undefined})});const j=await r.json();const a=j.answer||j.error||"(no answer)";b.textContent=a;
+  hist.push({role:"user",content:text});hist.push({role:"assistant",content:a});if(hist.length>12)hist=hist.slice(-12);}
+ catch(e){b.textContent="error: "+e;}}
+["Which coin did best and why?","Compare the top two pairs.","Which coin had the worst drawdown?","Summarize the whole comparison."]
+ .forEach(s=>{const c=document.createElement("span");c.className="chip";c.textContent=s;c.onclick=()=>ask(s);document.getElementById("chips").appendChild(c);});
+document.getElementById("cf").addEventListener("submit",e=>{e.preventDefault();ask(document.getElementById("q").value);});
+(async()=>{try{const d=await (await fetch("/api/chat/providers")).json();const pv=document.getElementById("prov");
+ const ps=d.providers||[];pv.innerHTML=ps.map(p=>`<option value="${p.name}"${p.name===d.default?" selected":""}>${p.name}</option>`).join("");
+ if(ps.length<=1)pv.parentElement.style.display="none";}catch(e){document.getElementById("prov").parentElement.style.display="none";}})();
+load();
+</script></body></html>"""
+
+
+def help_html() -> str:
+    """Beginner help page (§12): what each page shows, every metric in plain language (EN + VI),
+    and the safety rules. Static, read-only, self-contained — the on-ramp for a new operator."""
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Help · AutoTrader</title>
+<style>
+ body{font:14px system-ui,sans-serif;background:#0f1115;color:#d7dbe0;margin:0;padding:16px;max-width:1100px}
+ h1{font-size:17px;margin:0 0 10px} h2{font-size:14px;color:#9fc7e6;margin:22px 0 8px;border-bottom:1px solid #232833;padding-bottom:4px}
+ table{border-collapse:collapse;width:100%;font-size:13px} th,td{text-align:left;padding:6px 10px;border-bottom:1px solid #1d232e;vertical-align:top}
+ th{color:#8b93a1;font-size:11px;text-transform:uppercase} td:first-child{white-space:nowrap;color:#e8ecf2;font-weight:600}
+ .vi{color:#8b93a1;display:block;margin-top:2px} code{background:#161a20;border:1px solid #232833;border-radius:4px;padding:1px 6px;font-size:12px}
+ .safe{background:#1c1520;border:1px solid #4a2a35;border-radius:8px;padding:10px 14px;margin:10px 0}
+ .safe b{color:#f0a0a0} li{margin:4px 0;line-height:1.45} .ok{color:#46d17f}
+</style></head><body>
+<h1>Help — how to read this software <span class="vi">Trợ giúp — cách đọc phần mềm này</span></h1>
+
+<div class="safe"><b>This is PAPER trading.</b> No real money is used anywhere. Every simulated order still
+passes the same risk engine that a real order would; the AI assistant can only <i>explain</i> — it can never trade.
+<span class="vi"><b>Đây là giao dịch GIẤY (mô phỏng).</b> Không có tiền thật ở bất kỳ đâu. Mọi lệnh mô phỏng vẫn đi qua
+đúng bộ máy kiểm soát rủi ro như lệnh thật; trợ lý AI chỉ <i>giải thích</i> — không bao giờ được đặt lệnh.</span></div>
+
+<h2>The pages · Các trang</h2>
+<table>
+<tr><th>Page</th><th>What it shows · Nội dung</th></tr>
+<tr><td><a href="/">Dashboard</a></td><td>Equity, today's P&amp;L vs limits, drawdown vs kill-switch, open positions, decision log.
+ <span class="vi">Vốn, lãi/lỗ hôm nay so với giới hạn, mức sụt giảm so với công tắc dừng khẩn, vị thế đang mở, nhật ký quyết định.</span></td></tr>
+<tr><td><a href="/markets">Markets</a></td><td>Watchlist + heatmap across coins. <span class="vi">Danh sách theo dõi + bản đồ nhiệt các coin.</span></td></tr>
+<tr><td><a href="/coin">Coin</a></td><td>Candlestick chart with EMA/RSI overlays, order book depth, agent view ("why acting / not").
+ <span class="vi">Biểu đồ nến kèm EMA/RSI, độ sâu sổ lệnh, góc nhìn agent ("vì sao hành động / không").</span></td></tr>
+<tr><td><a href="/orders">Orders</a></td><td>Every order attempt with its risk verdict; manual order form (still risk-gated).
+ <span class="vi">Mọi lần thử đặt lệnh kèm phán quyết rủi ro; form đặt lệnh tay (vẫn qua kiểm soát rủi ro).</span></td></tr>
+<tr><td><a href="/replay">Replay</a></td><td>Compare coins or strategies over PAST data — the metric table below explains every column.
+ <span class="vi">So sánh coin hoặc chiến lược trên dữ liệu QUÁ KHỨ — bảng chỉ số bên dưới giải thích từng cột.</span></td></tr>
+<tr><td><a href="/terminal">Terminal</a> / <a href="/pro">Pro</a></td><td>Single-screen dense views (all widgets tiled).
+ <span class="vi">Màn hình gộp mọi widget (cho người dùng thành thạo).</span></td></tr>
+<tr><td><a href="/chat">Assistant</a></td><td>Ask questions about the current state in plain language; read-only.
+ <span class="vi">Hỏi đáp về trạng thái hiện tại bằng ngôn ngữ tự nhiên; chỉ đọc.</span></td></tr>
+</table>
+
+<h2>Reading the numbers · Đọc các chỉ số</h2>
+<table>
+<tr><th>Metric</th><th>Meaning · Ý nghĩa</th></tr>
+<tr><td>Equity</td><td>Total account value (cash + open positions, marked to market).
+ <span class="vi">Tổng giá trị tài khoản (tiền mặt + vị thế đang mở, định giá theo thị trường).</span></td></tr>
+<tr><td>Return</td><td>Final equity vs. starting equity, as %. <span class="vi">Vốn cuối so với vốn đầu, tính theo %.</span></td></tr>
+<tr><td>Win rate</td><td>Share of closed trades that made money. <span class="vi">Tỷ lệ các lệnh đã đóng có lãi.</span></td></tr>
+<tr><td>PF (Profit Factor)</td><td>Gross profit ÷ gross loss. &gt;1 = profitable overall; ∞ = no losing trade yet.
+ <span class="vi">Tổng lãi ÷ tổng lỗ. &gt;1 = tổng thể có lãi; ∞ = chưa có lệnh lỗ nào.</span></td></tr>
+<tr><td>Max DD (Drawdown)</td><td>Worst peak-to-trough fall of equity. −10% means at some point you were down 10% from the best value.
+ <span class="vi">Mức sụt giảm sâu nhất từ đỉnh xuống đáy của vốn. −10% nghĩa là có lúc bạn mất 10% so với đỉnh.</span></td></tr>
+<tr><td>Calmar</td><td>Return ÷ |max drawdown| — reward earned per unit of worst pain. Higher is better.
+ <span class="vi">Lợi nhuận ÷ |mức sụt giảm sâu nhất| — lãi thu được trên mỗi đơn vị "đau" tệ nhất. Càng cao càng tốt.</span></td></tr>
+<tr><td>Sharpe</td><td>Average return ÷ volatility of returns. Rewards steady gains, punishes swings (both directions).
+ <span class="vi">Lợi nhuận trung bình ÷ độ biến động. Thưởng cho tăng trưởng đều, phạt dao động mạnh (cả hai chiều).</span></td></tr>
+<tr><td>Sortino</td><td>Like Sharpe but only punishes DOWNSIDE swings — kinder to strategies that jump up.
+ <span class="vi">Giống Sharpe nhưng chỉ phạt dao động GIẢM — công bằng hơn với chiến lược hay bật tăng.</span></td></tr>
+<tr><td>VaR 95%</td><td>On a bad day (worst 5%), expect at least this loss per tick.
+ <span class="vi">Vào ngày xấu (5% tệ nhất), dự kiến lỗ ít nhất mức này mỗi phiên.</span></td></tr>
+<tr><td>CVaR 95%</td><td>The AVERAGE of those worst-5% losses — always at least as bad as VaR; the honest tail number.
+ <span class="vi">TRUNG BÌNH của nhóm 5% lỗ tệ nhất — luôn xấu bằng hoặc hơn VaR; con số trung thực về rủi ro đuôi.</span></td></tr>
+<tr><td>DD95 / DD99</td><td>Monte-Carlo: reshuffle the returns 500 times; the drawdown you'd expect in the 95%/99% worst run.
+ One backtest is one draw of luck — this shows the distribution.
+ <span class="vi">Monte-Carlo: xáo trộn chuỗi lợi nhuận 500 lần; mức sụt giảm dự kiến ở kịch bản tệ nhất 95%/99%.
+ Một lần backtest chỉ là một lần may rủi — đây là cả phân phối.</span></td></tr>
+<tr><td>Exp% (Exposure)</td><td>Average share of equity deployed in positions. <span class="vi">Tỷ lệ vốn trung bình đang nằm trong vị thế.</span></td></tr>
+<tr><td>TiM% (Time in Market)</td><td>Share of time holding any position. <span class="vi">Tỷ lệ thời gian đang giữ vị thế.</span></td></tr>
+<tr><td>Kill-switch</td><td>The emergency stop. Engaging it halts ALL new entries immediately; only a human can re-arm.
+ <span class="vi">Công tắc dừng khẩn cấp. Bật lên là chặn ngay MỌI lệnh vào mới; chỉ con người mới mở lại được.</span></td></tr>
+<tr><td>DSR (research)</td><td>Deflated Sharpe: Sharpe corrected for how many strategies were tried. A strategy only counts as a real edge at DSR ≥ 0.95.
+ <span class="vi">Sharpe đã khấu trừ theo số chiến lược đã thử. Chỉ được coi là lợi thế thật khi DSR ≥ 0.95.</span></td></tr>
+</table>
+
+<h2>Safety rules · Nguyên tắc an toàn</h2>
+<ul>
+<li>No real capital until every phase gate passes and a human signs off. <span class="vi">Không dùng tiền thật cho tới khi qua đủ các cổng kiểm tra và có người phê duyệt.</span></li>
+<li>Every order — bot or manual — passes the same risk engine; there is no backdoor. <span class="vi">Mọi lệnh — bot hay tay — đều qua cùng một bộ kiểm soát rủi ro; không có đường tắt.</span></li>
+<li>The AI (local or cloud) is read-only: it explains, it never trades. <span class="vi">AI (local hay cloud) chỉ đọc: giải thích, không bao giờ giao dịch.</span></li>
+<li>A green replay/backtest number is NOT proof of an edge — costs, luck and overfitting lie. Trust only walk-forward + DSR.
+ <span class="vi">Con số xanh trong replay/backtest KHÔNG chứng minh có lợi thế — phí, may mắn và overfitting đánh lừa. Chỉ tin walk-forward + DSR.</span></li>
+</ul>
+
+<h2>Quick start · Bắt đầu nhanh</h2>
+<ul>
+<li><code>python -m src.dry_run --data-exchange kucoin --pair BTC/USDT --replay-days 30 --serve-ui</code>
+ — replay 30 days of real data, then browse the result here. <span class="vi">— chạy lại 30 ngày dữ liệu thật rồi xem kết quả tại đây.</span></li>
+<li><code>python -m src.dry_run --pairs "BTC/USDT,ETH/USDT,SOL/USDT" --replay-days 30 --serve-ui</code>
+ — compare coins on <a href="/replay">/replay</a>. <span class="vi">— so sánh các coin.</span></li>
+<li><code>python -m src.dry_run --data-exchange bitbank --pair BTC/JPY --iterations 0 --serve-ui</code>
+ — the live paper loop (the real ≥30-day run). <span class="vi">— vòng lặp giấy chạy thật (đợt ≥30 ngày).</span></li>
+</ul>
+<p class="ok">Full operator guide: <code>docs/RUNBOOK.md</code></p>
+</body></html>"""
+
+
+def status_html() -> str:
+    """System-health page (§12, read-only): green/amber/red lights over /api/status — phase,
+    trading config, §14 pre-flight checks, AI providers, Ollama. "Is everything OK?" at a glance."""
+    return """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Status · AutoTrader</title>
+<style>
+ body{font:14px system-ui,sans-serif;background:#0f1115;color:#d7dbe0;margin:0;padding:16px;max-width:1100px}
+ h1{font-size:17px;margin:0 0 12px} h2{font-size:13px;color:#8b93a1;margin:18px 0 8px;text-transform:uppercase}
+ .grid{display:flex;flex-wrap:wrap;gap:12px} .card{background:#12151b;border:1px solid #1f2530;border-radius:8px;padding:12px 16px;min-width:210px}
+ .lbl{color:#8b93a1;font-size:11px;text-transform:uppercase;margin-bottom:4px} .val{font-size:16px;font-weight:600}
+ .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px;vertical-align:1px}
+ .g{background:#46d17f} .a{background:#e6a23c} .r{background:#f06a6a} .x{background:#5a6372}
+ table{border-collapse:collapse;width:100%;font-size:13px} th,td{text-align:left;padding:5px 10px;border-bottom:1px solid #1d232e}
+ th{color:#8b93a1;font-size:11px;text-transform:uppercase}
+ .PASS{color:#46d17f} .FAIL{color:#f06a6a} .WARN{color:#e6a23c} .MANUAL{color:#8b93a1} .SIGNED{color:#46d17f}
+ .banner{border-radius:8px;padding:10px 14px;margin:12px 0;font-size:13px}
+ .notready{background:#1c1520;border:1px solid #4a2a35;color:#f0a0a0}
+ .muted{color:#8b93a1} code{background:#161a20;border:1px solid #232833;border-radius:4px;padding:1px 6px;font-size:12px}
+</style></head><body>
+<h1>System status <span id="ver" class="muted"></span></h1>
+<div class="grid" id="lights"></div>
+<div id="capital" class="banner notready" style="display:none"></div>
+<h2>Trading configuration</h2><div class="grid" id="cfg"></div>
+<h2>AI assistant backends</h2><div class="grid" id="ai"></div>
+<h2>Go-live pre-flight (§14) — every box must pass before ANY real money</h2>
+<table id="pf"><thead><tr><th></th><th>Check</th><th>Detail</th></tr></thead><tbody></tbody></table>
+<p class="muted">Read-only. Manual items are the operator's to complete — see <code>docs/RUNBOOK.md</code>.</p>
+<script>
+const dot=(c)=>`<span class="dot ${c}"></span>`;
+function card(l,v){return `<div class="card"><div class="lbl">${l}</div><div class="val">${v}</div></div>`}
+async function load(){const d=await (await fetch("/api/status")).json();
+ document.getElementById("ver").textContent=`v${d.version} · ${d.phase} · PAPER`;
+ const cfgOk=!d.config_error, auto=`${d.auto_checks_pass}/${d.auto_checks_total}`;
+ const autoC=d.auto_checks_pass===d.auto_checks_total?"g":"r";
+ document.getElementById("lights").innerHTML=[
+  card("Config files", dot(cfgOk?"g":"r")+(cfgOk?"loaded":"ERROR")),
+  card("Auto checks", dot(autoC)+auto+" pass"),
+  card("Local AI (Ollama)", dot(d.ollama_reachable?"g":"x")+(d.ollama_reachable?"running":"not running")),
+  card("Mode", dot("g")+"PAPER — no real money"),
+ ].join("");
+ const cap=document.getElementById("capital");cap.style.display="block";
+ cap.innerHTML=d.ready_for_real_capital?"Ready for real capital review (all gates pass — human sign-off still required)":
+  `<b>NOT READY for real capital</b> — ${d.manual_items_pending} operator gate(s) pending. This is expected before P4; paper trading is unaffected.`;
+ const c=d.config||{};
+ document.getElementById("cfg").innerHTML=[
+  card("Venue", c.venue??"—"), card("Pairs",(c.pairs||[]).join(", ")||"—"), card("Timeframe", c.timeframe??"—"),
+  card("Fees (maker/taker)", `${((c.maker_fee??0)*100).toFixed(2)}% / ${((c.taker_fee??0)*100).toFixed(2)}%`),
+  card("Leverage", dot(c.leverage===0?"g":"r")+String(c.leverage??"—")+(c.leverage===0?" (off — correct)":" (!)")),
+  card("Sentiment floor", String(c.sentiment_floor??"—")+(c.sentiment_floor===1?" (feature off — correct)":"")),
+ ].join("");
+ document.getElementById("ai").innerHTML=(d.chat_providers||[]).map(p=>
+  card(p.name+(p.local?" (local)":""), dot(p.available?"g":"x")+(p.available?(p.local?"always available":"key set"):`set ${p.env_var}`))).join("");
+ document.querySelector("#pf tbody").innerHTML=(d.preflight||[]).map(c=>
+  `<tr><td class="${c.status}">${c.status}</td><td>${c.item}</td><td class="muted">${c.detail||""}</td></tr>`).join("");
+}
+load();
 </script></body></html>"""
 
 
@@ -685,7 +1216,7 @@ def serve(ctx: OperatorContext, *, host: str = "127.0.0.1", port: int = 8787) ->
                 body = json.loads(raw) if raw else None
             except json.JSONDecodeError:
                 body = None
-            resp = handle_request(method, self.path, body, ctx)
+            resp = handle_request(method, self.path, body, ctx, dict(self.headers))
             payload = resp.body if isinstance(resp.body, str) else json.dumps(resp.body)
             out = payload.encode("utf-8")
             self.send_response(resp.status)
@@ -837,8 +1368,17 @@ def build_demo_context() -> OperatorContext:
         return build_order_trade_panel(evs)
 
     def _dashboard() -> dict:
+        from src.events.log import Event
         from src.ui.performance import performance_summary
-        payload = dashboard_payload(state=state, cfg=cfg, prices={pair: price}, killswitch=ks)
+        demo_events = [  # chronological (oldest first) — the model reverses to newest-first
+            Event("OrderSubmitted", "2026-06-28T09:00:00+00:00",
+                  {"pair": pair, "side": "buy", "qty": 0.02}),
+            Event("RiskRejected", "2026-06-28T10:00:00+00:00",
+                  {"pair": pair, "side": "buy", "reasons": ["below_min_notional"]}),
+            Event("SignalGenerated", "2026-06-28T11:59:00+00:00", {"pair": pair, "intent": "hold"}),
+        ]
+        payload = dashboard_payload(state=state, cfg=cfg, prices={pair: price}, killswitch=ks,
+                                    events=demo_events)
         demo_trades = [
             {"exit_time": "2026-06-28T09:00:00+00:00", "pair": pair, "qty": 0.02,
              "entry_price": 9.5e6, "exit_price": 9.9e6, "return": 0.0421, "pnl": 8000.0},
@@ -851,6 +1391,18 @@ def build_demo_context() -> OperatorContext:
                              "last_tick_at": "2026-06-28T12:00:00+00:00", "pair": pair,
                              "timeframe": "1h"}
         return payload
+
+    def _chat(body: dict) -> dict:
+        # demo assistant: a canned transport so /chat is navigable offline (no Ollama). The real
+        # read-only assistant is wired in build_live_context against a local Ollama server.
+        from src.llm.chat import OllamaChat
+        from src.llm.chat import answer as _ans
+        canned = ('{"message":{"content":"(demo assistant) I am read-only — I explain state but '
+                  'cannot trade. This demo has fixed data; run --serve-ui with Ollama for live '
+                  'answers."}}')
+        client = OllamaChat(transport=lambda url, payload: canned)
+        return _ans(str(body.get("question", "")), _dashboard(), client=client,
+                    history=body.get("history"))
 
     return OperatorContext(
         dashboard=_dashboard,
@@ -865,6 +1417,7 @@ def build_demo_context() -> OperatorContext:
         orderbook=_orderbook,
         agentview=_agentview,
         trades_tape=_trades_tape,
+        chat=_chat,
     )
 
 

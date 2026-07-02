@@ -473,6 +473,327 @@ edge** (−22%/2.5y). Instead, added the legitimate path + pro-quant gaps:
 **Remaining (operational gate):** ≥30-day dry-run on bitbank + parity + §9 restart-safety; running
 *actual* Freqtrade dry-run (install/config) to feed the fill-parity reference.
 
+### 2026-06-30 (session) — invariant re-audit of all order paths + router robustness fix
+Fresh-container resume; re-installed deps, baseline **519 passed**, ruff clean. Since the last
+13-finding audit several write surfaces were added (manual order, UI flatten, kill-switch via
+HTTP), so re-proved **Inv 3/9 ("one execution path, no backdoor")** by tracing every path that can
+reach the exchange:
+- **Bot loop** (`fast_loop._enter/_exit`), **manual order** (`DryRunner.place_manual`), and **UI
+  flatten** (`POST /api/order` side:sell → `place_manual`) all route `engine.validate` →
+  `broker.submit`. Broker still refuses any non-engine-minted `Approval` (`is_engine_approved`).
+- **Preview** (`ui/preview`, `/api/preview`) runs the exact `validate` with **no** submit.
+- **Protective stop** (`stops.attach`) is a **reduceOnly sell** (risk-reducing) — correctly outside
+  the entry gate; fails closed on a non-positive stop price.
+- **Kill-switch** `re_arm` requires an operator identity; engage overrides everything.
+  → **Core invariants intact.** No backdoor; runtime controls remain tighten-only.
+- **One defect found & fixed (test-first):** the live `_place`/`_preview` wrappers do
+  `float(body["qty"])` *before* `place_manual`'s own try/except, so a malformed write body (e.g.
+  `{"qty":"abc"}`) raised `ValueError` that escaped `handle_request` (no try/except in `_dispatch`)
+  → traceback/500 to the operator instead of a clean 400. Not an invariant breach (no order placed,
+  no server crash — `ThreadingHTTPServer` isolates the request), but a robustness/contract gap.
+  Fixed in the router: `/api/preview` and `/api/order` now catch `(ValueError, TypeError)` → **400**
+  `invalid request body`. Test `test_malformed_write_body_is_400_not_a_crash`. Suite **519→520**.
+
+### 2026-06-30 (session, cont.) — operator chat assistant (READ-ONLY, explain-only)
+Added a real chat UI the operator can ask about the bot's state — built within the invariants
+(this is the only safe shape for an LLM chat here):
+- `src/llm/chat.py` — the assistant. **Inv 1 by construction:** the module imports NOTHING from
+  the risk/execution/order path (an AST import-safety test pins it), so there is provably no path
+  from a chat reply to an order. **Inv 2:** off the fast loop — runs only on the UI thread when the
+  operator asks; Ollama down → fail-soft 'unavailable', trading unaffected. **Inv 6:**
+  `build_context_summary` is a strict field whitelist over the (already-redacted) dashboard
+  snapshot, so a new/secret field can't leak into the prompt. Strong system prompt REFUSES to act
+  (place/size/limit/kill-switch) and points to the deterministic risk-gated controls. Ollama
+  `/api/chat` backend, transport injected → tested offline. +11 tests.
+- `ui/server.py` — `OperatorContext.chat`, `POST /api/chat` (404 when disabled, 400 on bad body,
+  405 on GET), `GET /chat` self-contained page (persistent read-only banner), nav link from the
+  dashboard. `chat_html()`. Demo context wires a canned transport so `/chat` is navigable offline.
+- `ui/live.py` — `_chat` wires the live dashboard snapshot to an `OllamaChat` client (model/host
+  configurable); `dry_run.py --chat-model` (default llama3.1). Live HTTP smoke OK (page + answer).
+- Suite **520→532**, ruff clean. The assistant cannot trade — all trading stays on the manual
+  risk-gated order form (Inv 9) and the kill-switch.
+
+### 2026-06-30 (session, cont.) — chat assistant extended (richer context + multi-turn + chips)
+Made the read-only assistant genuinely useful, still within the invariants:
+- **Richer whitelisted context** (`build_context_summary`): now also renders **bot health**
+  (running/ticks/last-tick/last-error), **realized performance** (trades, win rate, profit factor
+  [∞-safe], expectancy, total P&L, best/worst), and **recent closed trades** — all from the
+  already-redacted live dashboard payload, still an explicit field whitelist (no leak).
+- **Multi-turn conversation** (`_sanitize_history` + `build_messages(..., history)`): follow-ups
+  ("why?") keep context. History is sanitized (only user/assistant + string content), bounded
+  (`_MAX_HISTORY_TURNS=6`), and never raises on junk; the current state is attached only to the
+  latest turn (no stale-snapshot duplication). Threaded through `OllamaChat.answer`/`answer` and the
+  live + demo `_chat` (`body["history"]`).
+- **UI** (`chat_html`): client-side conversation memory sent as `history`, **suggested-question
+  chips**, and a **Clear chat** button. Live HTTP smoke OK (chips, multi-turn, junk-history
+  fail-soft). +5 tests. Suite **532→537**, ruff clean.
+
+### 2026-06-30 (session, cont.) — chat: structured decision-log citations + per-row "explain"
+- **Structured citations (1):** decision-log lines in the prompt are labelled `[D1] [D2] …`; the
+  system prompt tells the model to cite those labels when explaining a past decision. `answer()`
+  returns a `citations` list — `extract_citations()` parses `[D#]` out of the reply and maps each
+  back to the *actual* logged entry (same 1-based index as the context slice, deduped, out-of-range
+  dropped → no hallucinated reference). The `/chat` page renders citations (ref + timestamp + type +
+  pair + reason) under the answer. +4 tests.
+- **Per-row explain button (2):** every decision-log row on the dashboard gets an "explain" link to
+  `/chat?q=<prefilled question about that row>`; the chat page reads `?q=` and auto-asks on load.
+- Demo dashboard now seeds a small decision log so citations are demonstrable offline. Live HTTP
+  smoke OK (explain links present, `?q=` auto-ask wired, `/api/chat` returns resolved citations
+  D1/D2). Suite **537→541**, ruff clean. Still strictly read-only (Inv 1).
+
+### 2026-06-30 (session, cont.) — UI write-endpoint auth token (defense-in-depth)
+The whole operator UI assumed localhost/solo-operator (no auth). Added an OPTIONAL shared-secret
+gate on the *dangerous* writes so the surface is safe if ever exposed off localhost:
+- `handle_request(..., headers=None)` + `OperatorContext.auth_token`: when a token is configured,
+  `/api/order` and `/api/killswitch/engage|rearm` require a matching `X-Auth-Token` (constant-time
+  compare) → **401** otherwise. Read endpoints (GET) and read-only POSTs (`/api/preview`,
+  `/api/chat`) stay open (they can't move money). Backward compatible: no token = unchanged.
+- Wiring: `build_live_context(..., auth_token=)`; `dry_run.py --ui-token` / env `UI_AUTH_TOKEN`;
+  startup line reports writes as TOKEN-PROTECTED or open. Browser side: a small `fetch` wrapper on
+  the four write pages attaches the token from `localStorage` on POSTs and prompts+retries on 401.
+- +2 tests; live HTTP smoke OK (order/kill-switch 401 without token, 200 with; preview/dashboard
+  open). Suite **541→543**, ruff clean.
+
+### 2026-06-30 (session, cont.) — edge research a3: funding-rate carry (new information source)
+Acted on the findings doc's own recommendation (TA/cross-sectional/regime all failed DSR → try a
+*different information source*). Built the funding path, TDD, invariant-safe (spot long-or-flat, no
+leverage/shorting — funding is only the signal; ADR 0002: funding is research/viewing data):
+- `src/data/funding.py` — `fetch_funding_history` (paginate `fetch_funding_rate_history`, drop
+  still-forming interval, causal, mirrors feed.py) + `align_funding` (`merge_asof` backward: each
+  candle sees only funding known at/before its close — no look-ahead §8.4). +7 tests.
+- `src/strategy/funding_carry.py` — `FundingCarry`: long spot when smoothed funding ≤ threshold
+  (contrarian to crowd positioning), else flat; intent-only, causal, 2 params, NaN→fail-flat. +7
+  tests (incl. causality prefix==full and backtest-integration lock).
+- `scripts/funding_edge_search.py` — variant set through the SAME walk-forward + Deflated-Sharpe +
+  shared journal (§5), must beat buy-and-hold.
+- **NOT yet run on real data:** cloud env is geo-blocked from Bybit (403 CloudFront, like Binance
+  451) → the real fetch+search runs on the operator's machine (command in findings doc). Offline
+  integration proven (synthetic → align → FundingCarry → walk-forward → DSR, correctly rejects
+  random data). Findings doc updated (a3). Suite **543→557**, ruff clean.
+
+### 2026-06-30 (session, cont.) — operator runbook (docs/RUNBOOK.md)
+Tied the existing tooling into one step-by-step for the operator-only gates: env setup → paper tick
+→ signal parity (§8.9) → edge research (strategy_search + the new funding_edge_search) → ≥30-day
+dry-run with the UI (incl. the new `UI_AUTH_TOKEN`) → restart-safety (§9) → optional Ollama (P1
+ablation, P2 hypotheses, /chat) → config re-lock (§15) → go-live pre-flight (§14). Every command
+verified against the actual CLI flags; the config re-lock snippet reproduces the committed lock;
+`go_live_preflight` runs (5/5 auto, 13 manual pending → NOT READY, correct). Linked from CLAUDE.md
+and HANDOFF.md. Docs-only; suite unchanged at **557**, ruff clean.
+
+### 2026-06-30 (session, cont.) — dry-run REPLAY mode (paper loop over past data)
+Added a way to run the paper dry-run over **historical** data (not just the live poll): 
+- `ReplayFeed` (src/dry_run.py) — read-only OHLCV over a fixed dataset, bounded by a movable `_now`;
+  mirrors venue semantics (since=None → most-recent `limit`; since given → from there forward). No
+  network. `from_frame` builds it from a fetched history frame.
+- `DryRunner.replay()` — steps a synthetic clock one timeframe at a time, calling `run_once(now_ms=t)`
+  so each tick sees only candles closed by t (causal, no look-ahead §8.4). Same path as live
+  (loop → risk → broker → protective stop → event log); a bad bar is caught+skipped like `run()`.
+- CLI `--replay-days N`: fetch N days from `--data-exchange`, replay through the paper loop, print
+  ticks/trades/final-equity/return, write the event log; `--serve-ui` keeps the dashboard up after.
+- +4 tests (ReplayFeed semantics, from_frame, end-to-end trades, **causality: first-K result
+  independent of future bars**). Offline e2e demo ran 150 ticks over synthetic history. RUNBOOK
+  §4b documents it as a same-day smoke before the ≥30-day forward run. Suite **557→561**, ruff clean.
+
+### 2026-06-30 (session, cont.) — replay from REAL stored history (fetch-once / replay-offline)
+Extended replay to use the coin's **real** past data, repeatably:
+- CLI `--replay-file <.parquet/.csv>` (replay stored real OHLCV, no network) and `--save-history
+  <.parquet>` (with `--replay-days`, save the fetched real history via `data.store` for reuse).
+  `_load_replay_history` picks file-vs-fetch. +1 test (store round-trip → ReplayFeed → replay).
+- **Demonstrated on REAL data here:** cloud env reaches kraken/coinbase/kucoin/okx/gemini (only
+  bitbank/bybit/binance are geo-blocked). Fetched **1079 real kucoin BTC/USDT 1h candles (45d)**,
+  saved to parquet, replayed offline from the file — identical, reproducible. Event breakdown: 829
+  MarketReceived+SignalGenerated, 9 enter_long, all 9 **rejected by the engine as `per_asset_cap`**
+  → 0 trades. That is the documented "sizing proposes >25% per-asset, engine disposes" design note
+  (correct, invariant-safe), surfaced faithfully by replay — not a replay bug. Suite **561→562**,
+  ruff clean.
+
+### 2026-06-30 (session, cont.) — sizing: opt-in per-asset clamp (money code, TDD)
+Resolved the long-standing design note (inverse-ATR sizing proposing >25% per-asset → every live
+entry futilely rejected as `per_asset_cap`). TDD, money code, invariant-safe:
+- `risk/sizing.compute_size(..., clamp_per_asset=False)` — when on, caps the notional to the
+  per-asset headroom (`per_asset_cap_pct` − existing position value in the pair), matching
+  `limits.check_per_asset` exactly. **Strictly tightening** (size only shrinks; the engine still
+  disposes). No headroom → SKIP with `per_asset_cap` (never a forced trade). **Default off → the P0
+  backtest path is byte-for-byte unchanged** (same opt-in pattern as `size_multiplier`).
+- `fast_loop._enter` opts in (`clamp_per_asset=True`) so the **live loop / dry-run / replay** size
+  feasibly instead of being rejected. Fast-loop tests already keep size under the cap → unchanged.
+- +6 sizing tests (clamp limits notional to cap, accounts for existing exposure, SKIP at cap,
+  never-grows-when-under-cap, engine-accepts-the-clamped-order, opt-in default preserves Kelly).
+- **Verified on REAL data:** re-ran the replay on the saved 1079 real kucoin BTC/USDT candles —
+  now **9 closed trades, 18 RiskPassed, 0 rejections** (was 0 trades / 9 `per_asset_cap` rejects);
+  realized_pnl ~breakeven (EMA-cross has no edge — honest). Suite **562→568**, ruff clean.
+
+### 2026-06-30 (session, cont.) — multi-pair replay dashboard + cross-coin AI assistant
+Built a visual dry-run/replay comparison across selectable coins, with the read-only assistant
+scoped to all of them:
+- `ui/replay_dashboard.py` — pure model: `summarize_result` (per pair: return, max-DD, per-tick
+  Sharpe from the equity curve + `performance_summary` trade stats) and `build_replay_comparison`
+  (JSON-safe sortable table + best/worst + per-pair detail). +6 tests.
+- `llm/chat.py` — `build_multi_pair_summary` (renders the comparison for the LLM) + an injectable
+  `context_builder` threaded through `build_messages`/`OllamaChat.answer`/`answer` (default =
+  single-pair dashboard, unchanged). The assistant can now analyse/look up ACROSS coins. +3 tests.
+- `ui/server.py` — `OperatorContext.replay`, `GET /api/replay` + a `/replay` page (sortable metric
+  table, pair selector with equity mini-chart + trades, cross-coin chat box, suggestion chips), nav
+  link. +1 test. `ui/live.py` `build_replay_context` wires a finished comparison + the multi-pair
+  chat (read-only, no live loop).
+- `dry_run.py` — `run_multi_replay` (a DryRunner.replay per pair, own account/log/feed; a bad
+  symbol is skipped) + `--pairs A,B,C`; `--serve-ui` serves `/replay`.
+- **Verified on REAL data:** kucoin BTC/ETH/SOL 30d → BTC −0.69%, ETH −0.51%, SOL +1.77% (best SOL,
+  worst BTC); HTTP smoke: `/api/replay` sorted, `/replay` renders, cross-coin chat gets the whole
+  table in context and answers "SOL did best". Suite **568→578**, ruff clean. Read-only throughout
+  (Inv 1); still an optimistic-fill pipeline view (§2), not an edge claim.
+
+### 2026-06-30 (session, cont.) — richer replay metrics (Calmar, VaR/CVaR, exposure)
+Enriched the multi-pair comparison table + cross-coin chat with pro-desk metrics:
+- `ui/replay_dashboard.ReplayResult` now also carries **Calmar** (total_return/|maxDD|), **VaR95**
+  and **CVaR95** (from `backtest.risk_analytics` over per-tick equity returns), **avg_exposure**
+  and **time_in_market**. To feed exposure, `DryRunner._record_equity` now records per-tick gross
+  exposure (gross position value / equity) alongside equity — backward-compatible extra key.
+- Surfaced in the `/replay` table (new sortable columns), the chat multi-pair summary (so the AI
+  can reason over risk/exposure), and JSON. +1 test (calmar/VaR/CVaR/exposure) + updated fixtures.
+- **Verified on REAL data:** kucoin BTC/ETH/SOL 20d — all columns populate (e.g. SOL Calmar −0.29,
+  VaR95 −0.167%, CVaR95 −0.214%, exposure 8% / time-in-market 43%); CVaR ≤ VaR as expected. Suite
+  **578→579**, ruff clean.
+
+### 2026-06-30 (session, cont.) — replay metrics: Sortino + Monte-Carlo DD + threshold colouring
+- `ReplayResult` adds **Sortino** (per-tick mean / downside deviation) and **Monte-Carlo drawdown
+  p95/p99** (`bootstrap_max_drawdown`, seeded n=500 → reproducible). Both in the `/replay` table,
+  the chat multi-pair summary, and JSON.
+- `/replay` table now **threshold-coloured**: profit factor green ≥1 / red <1; max-DD, VaR95,
+  CVaR95, DD95, DD99 amber→red as the loss deepens; Calmar/Sharpe/Sortino/return green/red by sign;
+  exposure amber if >90%. +1 test (Sortino + MC-DD, incl. seeded reproducibility). Verified over
+  HTTP (new keys in `/api/replay`, new headers + colour helpers on the page). Suite **579→580**,
+  ruff clean.
+
+### 2026-06-30 (session, cont.) — strategy comparison on one coin (EMA/RSI/Donchian/Funding)
+Reused the /replay comparison surface to compare *strategies* on a single coin (not just coins):
+- `build_replay_comparison(..., dimension="strategy", coin=...)` — same table/model, rows now keyed
+  by strategy name; adds `dimension`/`label`/`coin`. Default stays `dimension="pair"` (backward
+  compatible). Chat multi-pair summary is dimension-aware ("Multi-strategy comparison on <coin>").
+- `dry_run.run_strategy_comparison` — runs each strategy on the SAME fetched history via the §8
+  **backtest engine** (uniform + honest; FundingCarry gets a causally-aligned funding column);
+  `_summarize_backtest` adapts BacktestResult→ReplayResult incl. per-bar exposure from trade spans.
+  Registry: ema/rsi/donchian/funding. CLI `--strategies a,b,c` (+ `--perp`) on one `--pair`.
+- `/replay` relabels the first column (Pair→Strategy) and shows the coin; served via
+  `build_replay_context`. +4 tests (strategy dimension model + default). 
+- **Verified on REAL data:** kucoin BTC/USDT 60d, all four — funding_carry −1.48% (best), ema
+  −3.67%, rsi −5.61%, donchian −7.23% (worst); kucoin served 100 funding prints. All negative =
+  honest (no edge). HTTP smoke: /replay shows dimension=strategy, coin, rows by strategy. Suite
+  **580→582**, ruff clean.
+
+### 2026-06-30 (session, cont.) — pluggable /chat backends (bring-your-own AI API key)
+The assistant was local-Ollama-only; added **opt-in cloud providers** while keeping local default:
+- `llm/chat.py` — `AnthropicChat` (Claude Messages API, `x-api-key` + `anthropic-version`, system
+  split out, model default `claude-opus-4-8`) and `OpenAIChat` (OpenAI-compatible chat/completions,
+  `Authorization: Bearer`, `base_url` override). Both use the **same stdlib-urllib + injectable
+  transport** pattern as `OllamaChat` (no new deps, offline-tested). `build_chat_client(provider,…)`
+  factory. `parse_anthropic_response`/`parse_openai_response`. +7 tests (incl. key-never-in-body).
+- **Secrets/privacy (Inv 6):** the API key is wrapped in `core.secrets.Secret` (repr/str masked to
+  `***`, revealed only for the auth header, never logged / never in the request body). Key comes
+  from the ENV only (`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`), never a CLI flag.
+- **Wiring:** `build_live_context`/`build_replay_context` take `chat_provider`/`chat_api_key`/
+  `chat_base_url`; `dry_run.py` `--chat-provider {ollama,anthropic,openai}` + `--chat-base-url`;
+  `_resolve_chat_config` pulls the key from env, prints a **privacy warning** that cloud sends the
+  dashboard snapshot off-machine, and **falls back to local Ollama** if the key is missing.
+- Still read-only (Inv 1) on every backend; default stays **local Ollama (data never leaves)**.
+  Suite **580→587**, ruff clean.
+
+### 2026-06-30 (session, cont.) — UI provider switcher + Gemini (extensible provider registry)
+- **Gemini backend** (`GeminiChat`): Google generateContent API (`x-goog-api-key` header, roles
+  user/model, separate `system_instruction`); same stdlib+injectable-transport pattern, key masked.
+  Registered in `CHAT_PROVIDERS` + `build_chat_client`. Adding a provider = one registry entry + one
+  factory branch.
+- **`ChatRouter`** holds one pre-built backend per available provider and routes by name;
+  `build_chat_router(env, …)` includes every provider whose key is in the env (Ollama always).
+- **Switch from the UI:** `GET /api/chat/providers` lists {name, model, default}; a **dropdown on
+  `/chat` and `/replay`** lets the operator pick the AI per question (sent as `provider` in the
+  `/api/chat` body — the key never leaves the server). `OperatorContext.chat_providers`;
+  `build_live_context`/`build_replay_context` take a `chat_router`; `dry_run` builds it from env and
+  prints which providers are available.
+- +7 tests (Gemini role-map + key-in-headers-only, router list/route/unknown→default,
+  build_chat_router key-gating, providers endpoint). Live HTTP smoke: 3 providers switchable per
+  request. Read-only on every backend (Inv 1); default local Ollama. Suite **587→591**, ruff clean.
+
+### 2026-07-01 (session) — professional polish + beginner on-ramp
+Package of UX/professionalism work (no trading-logic changes):
+- **Shared top-nav + favicon** on all standard pages (`_nav`/`_with_nav` inject one consistent
+  chrome: brand + PAPER tag + active-tab highlight; inline SVG favicon at `/favicon.ico`); the
+  ad-hoc per-page `<h1>` link clusters removed. Light-theme overrides included.
+- **`/help` page (bilingual EN/VI):** what each page shows, every metric in plain language (Equity,
+  PF, MaxDD, Calmar, Sharpe/Sortino, VaR/CVaR, MC-DD, exposure, kill-switch, DSR), the safety rules,
+  and a quick-start. **Tooltips** on every `/replay` column header (hover = plain-language meaning).
+- **Beginner-friendly KPI fixes:** Day-P&L value is sign-aware (a loss never renders green; the
+  gauge bar keeps limit-distance colour); sentiment tile shows off/fresh/stale instead of `null`.
+- **GitHub Actions CI** (`.github/workflows/ci.yml`: ruff + pytest, offline) + README badge.
+- **Console commands** (`[project.scripts]`): `autotrader` (= `python -m src.dry_run`) and
+  `autotrader-ui` (demo dashboard). Verified installed and running.
+- **README:** badge, dashboard screenshot (`docs/img/` captured with headless Chromium off the
+  demo server), 2-line "new here?" on-ramp.
+- +2 tests (help/favicon; every page carries the nav). Suite **591→593**, ruff clean.
+
+### 2026-07-01 (session, cont.) — beginner-professional wave, items 1–5 (v0.7.0)
+Completed the full polish roadmap in order:
+1. **`/status` page** — `core/status.gather_status` (fail-soft, read-only): version, phase (parsed
+   from PROGRESS.md), trading config (venue/pairs/fees/leverage/sentiment-floor), §14 pre-flight
+   lights (5/5 auto-pass, 13 manual pending → NOT READY, correct), AI backends (env key NAMES only),
+   Ollama probe (injectable). `GET /api/status` + `/status` page + nav link. +6 tests.
+2. **`autotrader init` wizard** — 4 plain questions (exchange/pair/equity/mode) → writes the
+   profile → prints exactly what to run next (+ /help, /status pointers). Injectable IO; verified
+   live through the console command. +2 tests.
+3. **`config/app.toml` profile** — `core/profile.py` (tomllib, WHITELISTED keys only — a profile
+   can never carry risk knobs), fed into argparse via `set_defaults` (flags override); git-ignored,
+   `config/app.example.toml` documents keys. +3 tests.
+4. **Versioning** — `0.7.0` in pyproject + `src.__version__` (shown on /status), `CHANGELOG.md`
+   (keep-a-changelog; release process = tag at every phase gate; v1.0.0 reserved for P4 sign-off),
+   git tag `v0.7.0`.
+5. **Empty states** — dashboard/orders placeholders now say what will appear and why ("No decisions
+   yet — every signal, risk verdict and order is logged here each tick") instead of "no events"/"—".
+Suite **593→603**, ruff clean. Screenshots refreshed (status/dashboard/help/chat).
+
+### 2026-07-02 (session) — audit-fix wave (10 findings, fixed in order)
+Re-analysis of the whole project produced 10 verified findings; fixing sequentially, one commit
+per fix group, TDD where money-adjacent:
+1. **+2. Daily rollover + checkpoint/resume** — `PaperAccount.roll_day` re-anchors
+   `day_start_equity` at each UTC midnight (day-loss limit was permanently anchored to launch
+   day); `DryRunner` checkpoints paper state atomically every tick
+   (`state/dry_run.checkpoint.json`, `--checkpoint`, auto-resume, corrupt→fail-soft) so a restart
+   no longer wipes positions/PnL. `DAY_ROLLED` event. +10 tests (suite 603→613... roll across
+   midnights proven in replay).
+3. **Protective stops simulated** — the paper loop registered reduceOnly stops but never filled
+   them; `_check_protective_stops` now sweeps resting stops against each candle's low BEFORE the
+   decision (gap-through fills at open, else at stop; stale stops cancelled; loss realized into
+   the day-loss/kill-switch path). `STOP_TRIGGERED` event. +5 tests.
+4. **Replay metrics on full history** — `replay()` capped `equity_history` at 5k points, so
+   Sharpe/MaxDD/VaR on long replays silently dropped the oldest data; the cap now grows with the
+   dataset. +1 test (suite →614).
+5. **+6. Config-driven loop + real market metadata + repo-root anchoring** — the CLI hard-coded
+   EMA 20/50 (drifting from the hash-locked `config/strategy/ema_cross.json` — now loaded via
+   `EmaCross.from_config`), hand-typed market constraints (now resolved from ccxt metadata via
+   `data/market_meta.py`, TICK_SIZE vs DECIMAL_PLACES handled, fail-soft to fallback with a
+   printed reason), and cwd-relative paths that broke the installed `autotrader` command run
+   from anywhere (`core/paths.repo_root()`: env override → marker walk-up → package parent).
+   +8 tests (suite →622); `autotrader --help` proven from a foreign cwd.
+7. **UI: cross-site POSTs rejected + `/api/chat` token-gated** — browsers attach `Origin` to
+   POSTs, so a malicious page could fire writes at `127.0.0.1:8080` (CSRF); non-localhost
+   Origin now → 403 (no-Origin curl/tests unaffected). `/api/chat` joined `_PROTECTED_WRITES`
+   (a cloud-provider call burns the operator's API credits). Token fetch-wrapper installed on
+   the chat + replay pages too. +2 tests (suite →624).
+8. **§14 sign-off registry** — the 13 operator-only go-live items got stable slugs; the operator
+   records who/when via `go_live_preflight.py --sign <slug> --operator <name>` →
+   `ops/signoff.json`; report + `/status` flip MANUAL → SIGNED; `is_ready` = every auto-check
+   PASS **and** all items SIGNED (FAIL/WARN can't be signed away; corrupt registry reads as
+   nothing-signed; template ships empty — nothing pre-signed, Inv 4/5). +7 tests (suite →631).
+9. **Candle-aligned polling** — the loop blind-slept 60s regardless of timeframe (~60 no-op
+   venue calls per 1h candle, and up to 60s late on a close); `feed.seconds_to_next_candle`
+   sleeps to the next epoch-aligned boundary + 5s grace; `--poll-seconds` default is now auto,
+   a number = fixed override (0 in tests). +5 tests (suite →636).
+10. **Professional gaps** — CI advisory mypy step (non-blocking; 13 pre-existing errors visible),
+    `GET /api/trades.csv` + dashboard ⬇ CSV link (spreadsheet/tax export), CHANGELOG `0.7.1`,
+    version bump. +1 test (suite →637).
+
+Wave complete: **suite 603 → 637**, every fix its own commit, ruff clean throughout, real-data
+verifications along the way (kucoin BTC/USDT replay; multi-pair; strategy comparison).
+
 ### What's left
 - **Phase-gated (later):** P1 `llm/**` sentiment (needs Ollama), P3 `ui/**` + `strategy/shadow`,
   `features/cache.py`.

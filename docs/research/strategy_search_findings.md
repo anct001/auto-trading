@@ -59,3 +59,27 @@ rsi 0.20 vs 0.26) and cut trade counts (worsening the sample). The ER filter did
 **Net:** simple TA, cross-sectional momentum, and regime filtering all fail the deflated-Sharpe
 gate on BTC/crypto. The infrastructure to *test* edges rigorously now exists; the missing piece is
 a genuine signal, which is a research problem, not a coding one. Go-live remains correctly blocked.
+
+## Follow-up: funding-rate carry (a3) — infra built, awaits a real run
+
+Acted on the doc's own recommendation ("a genuine edge needs a *different information source*, e.g.
+funding-rate or order-flow signals"). Built the funding path, TDD, invariant-safe (spot long-or-flat,
+no leverage, no shorting — funding is only the *signal*):
+
+- `src/data/funding.py` — `fetch_funding_history` (paginate `fetch_funding_rate_history`, drop the
+  still-forming interval, causal) + `align_funding` (attach the latest funding known **at or before**
+  each candle via `merge_asof` backward — no look-ahead §8.4).
+- `src/strategy/funding_carry.py` — `FundingCarry`: go long spot when smoothed funding ≤ threshold
+  (contrarian to crowd positioning), else flat. Intent-only, causal, 2 params (threshold, smooth).
+- `scripts/funding_edge_search.py` — runs a small variant set through the SAME walk-forward +
+  Deflated-Sharpe gate + shared journal (§5), must beat buy-and-hold.
+
+**Status: NOT yet evaluated on real data.** The cloud build env is geo-blocked from Bybit (403
+CloudFront, like Binance's 451), so the real fetch+search must run on the **operator's machine**:
+
+    python scripts/funding_edge_search.py --exchange bybit --pair BTC/USDT \
+        --perp BTC/USDT:USDT --timeframe 1h --days 730
+
+Offline integration is proven (synthetic funding → align → FundingCarry → walk-forward → DSR runs
+end-to-end and correctly rejects random data). Until the real run clears DSR ≥ 0.95 **and** beats
+buy-and-hold, go-live stays blocked — same honest bar as every other candidate.

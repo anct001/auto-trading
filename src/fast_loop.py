@@ -168,6 +168,7 @@ class FastLoop:
         sized = compute_size(
             pair=self.pair, price=price, atr=atr_now, state=state, cfg=self.cfg,
             market=self.market, atr_stop_mult=self.atr_stop_mult, size_multiplier=multiplier,
+            clamp_per_asset=True,  # size within the per-asset cap so the entry isn't futilely rejected
         )
         if not sized.feasible:
             self.events.append("EntrySkipped", {"pair": self.pair, "reason": sized.reason})
